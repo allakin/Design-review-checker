@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Design Review — папка для результатов</title>
+  <link rel="icon" href="../icons/icon32.png">
+  <link rel="stylesheet" href="setup.css">
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><img src="../icons/icon48.png" alt="" width="24" height="24"> Design Review</div>
+    <div class="step">Первый запуск</div>
+    <h1>Подключите папку reviews-results</h1>
+    <p>
+      Результаты ревью сохраняются в папку <code>reviews-results</code>, которая лежит в папке расширения.
+      Браузер разрешает расширению писать на диск только в папку, которую вы один раз укажете сами, —
+      поэтому выберите её в следующем окне.
+    </p>
+    <pre class="tree">Design review checker/          ← папка расширения
+├── manifest.json
+├── …
+└── <b>reviews-results/</b>            ← выберите эту папку
+    └── &lt;Название ревью&gt; — 2026-10-16/
+        ├── Отчёт.html
+        ├── review.json
+        └── screenshots/</pre>
+
+    <p class="note">
+      Можно выбрать и саму папку расширения — <code>reviews-results</code> в ней подхватится автоматически
+      (если её нет, расширение создаст). Содержимое <code>reviews-results</code> уже исключено в <code>.gitignore</code>
+      и в репозиторий не попадёт.
+    </p>
+
+    <div id="state"></div>
+  </main>
+  <script type="module" src="setup.js"></script>
+</body>
+</html>

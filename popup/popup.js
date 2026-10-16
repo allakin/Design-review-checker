@@ -1,0 +1,293 @@
+import * as store from '../lib/store.js';
+import { SEVERITIES, severityOf } from '../lib/constants.js';
+import { escapeHtml, formatDate } from '../lib/report.js';
+import * as folder from '../lib/folder.js';
+import { normalizeUrl, safeHref } from '../lib/url.js';
+import { icon } from '../lib/icons.js';
+
+const app = document.getElementById('app');
+const errorEl = document.getElementById('error');
+const btnAll = document.getElementById('btn-all');
+
+let view = 'auto'; // auto | list | create
+
+function showError(message) {
+  errorEl.textContent = message;
+  errorEl.hidden = !message;
+}
+
+function chip(sev, text = sev.label) {
+  return `<span class="chip" style="--fg:${sev.color};--bg:${sev.bg}"><i></i>${escapeHtml(text)}</span>`;
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
+function openPage(path) {
+  chrome.tabs.create({ url: chrome.runtime.getURL(path) });
+  window.close();
+}
+
+async function shortcut() {
+  const cmds = await chrome.commands.getAll();
+  return cmds.find((c) => c.name === 'start-pick')?.shortcut || '';
+}
+
+async function render() {
+  const [active, reviews] = await Promise.all([store.getActiveReview(), store.listReviews()]);
+  btnAll.hidden = !reviews.length || view === 'list';
+
+  if (view === 'list') return renderList(reviews, active);
+  if (view === 'create' || !active) return renderCreate(reviews);
+  return renderActive(active);
+}
+
+function renderCreate(reviews) {
+  app.innerHTML = `
+    <form id="create">
+      <h2>Новое ревью</h2>
+      <label>Название
+        <input type="text" name="title" maxlength="200" placeholder="Например: Ревью страницы оплаты">
+      </label>
+      <label>Ревьюер
+        <input type="text" name="author" maxlength="100" placeholder="Имя (необязательно)">
+      </label>
+      <label>Ссылка на тикет разработки
+        <input type="text" name="devTicketUrl" maxlength="500" placeholder="Ссылка">
+        <span class="field-err" hidden>Похоже, это не ссылка</span>
+      </label>
+      <label>Ссылка на тикет дизайна
+        <input type="text" name="designTicketUrl" maxlength="500" placeholder="Ссылка">
+        <span class="field-err" hidden>Похоже, это не ссылка</span>
+      </label>
+      <div class="row">
+        <button type="submit" class="btn btn-primary">Создать ревью</button>
+        ${reviews.length ? '<button type="button" class="btn btn-light" data-act="back">Отмена</button>' : ''}
+      </div>
+    </form>`;
+  const form = app.querySelector('#create');
+  chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+    const host = hostOf(tab?.url);
+    if (host) form.title.placeholder = `Например: Ревью ${host}`;
+  });
+  store.getActiveReview().then((r) => r?.author && (form.author.value = r.author));
+  form.title.focus();
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const links = {};
+    for (const name of ['devTicketUrl', 'designTicketUrl']) {
+      const input = form[name];
+      const link = normalizeUrl(input.value);
+      input.classList.toggle('invalid', !link.ok);
+      input.nextElementSibling.hidden = link.ok;
+      if (!link.ok) return input.focus();
+      links[name] = link.url;
+    }
+    await store.createReview({ title: form.title.value || form.title.placeholder.replace(/^Например: /, ''), author: form.author.value, ...links });
+    // Первый запуск: сначала нужно подключить папку reviews-results.
+    if (!(await folder.getDir())) return openPage('pages/setup.html');
+    view = 'auto';
+    render();
+  });
+  app.querySelector('[data-act=back]')?.addEventListener('click', () => {
+    view = 'auto';
+    render();
+  });
+}
+
+function renderList(reviews, active) {
+  app.innerHTML = `
+    <div class="row"><h2 style="margin:0">Все ревью</h2><span class="spacer"></span>
+      <button class="link" data-act="new">${icon('plus', 12)} Новое ревью</button></div>
+    <ul class="review-list">
+      ${reviews
+        .map(
+          (r) => `<li data-id="${r.id}" class="${r.id === active?.id ? 'active' : ''}">
+            <div class="t"><div>${escapeHtml(r.title)}</div>
+            <small>${r.issueCount} зам. · ${formatDate(r.updatedAt)}</small></div>
+            ${r.id === active?.id ? '<small>текущее</small>' : ''}
+          </li>`,
+        )
+        .join('')}
+    </ul>
+    <button class="btn btn-light" data-act="back">Назад</button>`;
+  app.querySelectorAll('.review-list li').forEach((li) =>
+    li.addEventListener('click', async () => {
+      await store.setActiveReviewId(li.dataset.id);
+      view = 'auto';
+      render();
+    }),
+  );
+  app.querySelector('[data-act=new]').addEventListener('click', () => {
+    view = 'create';
+    render();
+  });
+  app.querySelector('[data-act=back]').addEventListener('click', () => {
+    view = 'auto';
+    render();
+  });
+}
+
+async function renderActive(review) {
+  const issues = review.issues;
+  const counts = SEVERITIES.map((s) => ({ s, n: issues.filter((i) => severityOf(i.severity).id === s.id).length })).filter((x) => x.n);
+  const { exportFormat = 'html' } = await chrome.storage.local.get('exportFormat');
+  const keys = await shortcut();
+  const hasFolder = !!(await folder.getDir());
+
+  app.innerHTML = `
+    <section class="review-card">
+      <div class="card-head">
+        <div class="title"></div>
+        <div class="meta">${issues.length} зам. · создано ${formatDate(review.createdAt)}${review.author ? ` · ${escapeHtml(review.author)}` : ''}</div>
+      </div>
+      ${counts.length ? `<div class="row">${counts.map(({ s, n }) => chip(s, `${s.label}: ${n}`)).join('')}</div>` : ''}
+      ${ticketLinks(review)}
+      <div class="row card-actions">
+        <button class="link" data-act="open">${icon('pencil', 12)} Открыть и редактировать</button>
+        <span class="spacer"></span>
+        <button class="link" data-act="new">${icon('plus', 12)} Новое ревью</button>
+      </div>
+    </section>
+
+    ${
+      hasFolder
+        ? `<section class="pick">
+          <div class="pick-row">
+            <button class="btn btn-primary btn-big" data-act="pick">${icon('target', 18)} Выбрать элемент ${keys ? `<kbd>${escapeHtml(keys)}</kbd>` : ''}</button>
+            <button class="btn btn-light btn-timer" data-act="pick-delay" title="Через 3 секунды: успейте открыть выпадающий список, меню или наведение">${icon('stopwatch')} 3 с</button>
+          </div>
+          <div class="pick-hint">Зажмите и протяните мышью — снимок области. Для открытых меню и попапов: «3 с» или ${keys ? escapeHtml(keys) : 'горячая клавиша'} при открытом меню.</div>
+          ${
+            keys
+              ? `<button class="link shortcut-link" data-act="shortcut">${icon('keyboard', 14)} Изменить горячую клавишу (${escapeHtml(keys)})</button>`
+              : `<div class="shortcut-warn">${icon('keyboard', 14)} Горячая клавиша не назначена — браузер мог отдать её другому расширению.
+                  <button class="link" data-act="shortcut">Назначить</button></div>`
+          }
+          </section>`
+        : `<section class="setup">
+            <b>Перед первым ревью подключите папку результатов</b>
+            <span>Отчёты, данные и скриншоты сохраняются в <code>reviews-results</code> в папке расширения. Браузер попросит один раз указать её.</span>
+            <button class="btn btn-primary btn-big" data-act="setup">${icon('folder', 18)} Подключить reviews-results</button>
+          </section>`
+    }
+
+    <section>
+      <h2>Замечания</h2>
+      ${
+        issues.length
+          ? `<ul class="issues">${issues
+              .map(
+                (i, k) => `<li data-id="${i.id}">
+                  <span class="n">${k + 1}</span>
+                  ${i.screenshot ? `<img src="${escapeHtml(i.screenshot)}" alt="">` : ''}
+                  <span class="t"><div></div><small>${escapeHtml(hostOf(i.page?.url))}</small></span>
+                  ${chip(severityOf(i.severity))}
+                </li>`,
+              )
+              .join('')}</ul>`
+          : '<div class="empty">Пока пусто. Нажмите «Выбрать элемент», наведите курсор на блок страницы и кликните.</div>'
+      }
+    </section>
+
+    <section class="export">
+      <h2>Экспорт всего ревью</h2>
+      <div class="export-row">
+        <div class="seg">
+          <label><input type="radio" name="fmt" value="html" ${exportFormat === 'html' ? 'checked' : ''}>HTML</label>
+          <label><input type="radio" name="fmt" value="pdf" ${exportFormat === 'pdf' ? 'checked' : ''}>PDF</label>
+        </div>
+        <button class="btn btn-outline" data-act="export" ${issues.length ? '' : 'disabled'}>Экспортировать</button>
+      </div>
+      <button class="folder-line" data-act="folder"></button>
+    </section>`;
+  renderFolderLine(app.querySelector('[data-act=folder]'));
+
+  // Пользовательский текст вставляем через textContent.
+  app.querySelector('.review-card .title').textContent = review.title;
+  app.querySelectorAll('.issues li').forEach((li, k) => (li.querySelector('.t div').textContent = issues[k].title));
+
+  app.querySelector('[data-act=pick]')?.addEventListener('click', () => startPick(0));
+  app.querySelector('[data-act=pick-delay]')?.addEventListener('click', () => startPick(3));
+  app.querySelector('[data-act=shortcut]')?.addEventListener('click', openShortcuts);
+  app.querySelector('[data-act=setup]')?.addEventListener('click', () => openPage('pages/setup.html'));
+  app.querySelector('[data-act=open]').addEventListener('click', () => openPage(`pages/review.html?id=${review.id}`));
+  app.querySelector('[data-act=tickets]')?.addEventListener('click', () => openPage(`pages/review.html?id=${review.id}`));
+  app.querySelector('[data-act=new]').addEventListener('click', () => {
+    view = 'create';
+    render();
+  });
+  app.querySelectorAll('.issues li').forEach((li) =>
+    li.addEventListener('click', () => openPage(`pages/review.html?id=${review.id}#${li.dataset.id}`)),
+  );
+  app.querySelectorAll('input[name=fmt]').forEach((r) =>
+    r.addEventListener('change', () => chrome.storage.local.set({ exportFormat: r.value })),
+  );
+  app.querySelector('[data-act=export]').addEventListener('click', () => {
+    const fmt = app.querySelector('input[name=fmt]:checked').value;
+    openPage(`pages/report.html?id=${review.id}&action=${fmt}`);
+  });
+}
+
+function ticketLinks(review) {
+  const links = [
+    ['Тикет разработки', safeHref(review.devTicketUrl)],
+    ['Тикет дизайна', safeHref(review.designTicketUrl)],
+  ].filter(([, href]) => href);
+  if (!links.length) return `<div class="row tickets"><button class="link" data-act="tickets">${icon('link', 12)} Добавить ссылки на тикеты</button></div>`;
+  return `<div class="row tickets">${links
+    .map(([label, href]) => `<a href="${escapeHtml(href)}" target="_blank" rel="noopener" title="${escapeHtml(href)}">${label} ${icon('external', 12)}</a>`)
+    .join('')}</div>`;
+}
+
+async function renderFolderLine(el) {
+  const dir = await folder.getDir();
+  const { [folder.KEY_FOLDER_STATUS]: status = {} } = await chrome.storage.local.get(folder.KEY_FOLDER_STATUS);
+  const perm = dir ? await folder.permission(dir).catch(() => 'prompt') : null;
+  if (!dir) {
+    el.innerHTML = `${icon('folder', 14)} Сохранять на диск: <u>подключить reviews-results</u>`;
+  } else if (perm !== 'granted') {
+    el.innerHTML = `${icon('folder', 14)} Нет доступа к «${escapeHtml(dir.name)}»: <u>разрешить</u>`;
+    el.classList.add('warn');
+  } else if (status.state === 'error') {
+    el.innerHTML = `${icon('warning', 14)} Ошибка записи в «${escapeHtml(dir.name)}»: <u>подробнее</u>`;
+    el.classList.add('warn');
+  } else {
+    el.innerHTML = `${icon('folder', 14)} Сохраняется в «${escapeHtml(folder.folderLabel(dir, status))}»${status.lastSyncAt ? ` · ${new Date(status.lastSyncAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : ''}`;
+  }
+  el.addEventListener('click', () => openPage('pages/review.html#folder'));
+}
+
+// Страница горячих клавиш расширений. В Яндекс Браузере она называется browser://, chrome:// тоже понимает.
+async function openShortcuts() {
+  for (const url of ['chrome://extensions/shortcuts', 'browser://extensions/shortcuts']) {
+    try {
+      await chrome.tabs.create({ url });
+      window.close();
+      return;
+    } catch {}
+  }
+  showError('Не удалось открыть настройки. Откройте вручную: browser://extensions/shortcuts');
+}
+
+async function startPick(delay = 0) {
+  showError('');
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) return;
+  const res = await chrome.runtime.sendMessage({ type: 'drc:startPick', tabId: tab.id, delay });
+  if (res?.ok) window.close();
+  else showError(res?.error || 'Не удалось запустить выбор элемента');
+}
+
+btnAll.addEventListener('click', () => {
+  view = 'list';
+  render();
+});
+
+store.onReviewsChanged(() => view === 'auto' && render());
+render();
