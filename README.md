@@ -3,8 +3,8 @@
 <!-- badges:start -->
 [![Browser extension](https://img.shields.io/badge/Browser-extension-e05d44?logo=googlechrome&logoColor=white)](#установка)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285f4?logo=googlechrome&logoColor=white)
-![Release](https://img.shields.io/badge/release-v1.0.0-2ea44f?logo=github&logoColor=white)
-[![All tests: 351](https://img.shields.io/badge/All%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Release](https://img.shields.io/badge/release-v1.0.0-2ea44f?logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/releases)
+[![All tests: 374](https://img.shields.io/badge/All%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Store tests: 37/37](https://img.shields.io/badge/Store%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Report tests: 41/41](https://img.shields.io/badge/Report%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Folder tests: 44/44](https://img.shields.io/badge/Folder%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
@@ -13,7 +13,8 @@
 [![Utils tests: 18/18](https://img.shields.io/badge/Utils%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Popup tests: 23/23](https://img.shields.io/badge/Popup%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Pages tests: 47/47](https://img.shields.io/badge/Pages%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Integrity tests: 34/34](https://img.shields.io/badge/Integrity%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Release tests: 19/19](https://img.shields.io/badge/Release%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Integrity tests: 38/38](https://img.shields.io/badge/Integrity%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 <!-- badges:end -->
 
 **Расширение для браузера**, чтобы проводить дизайн-ревью вёрстки прямо на живой странице: сравнивать реализацию с макетом, фиксировать расхождения и отдавать разработчику готовый отчёт. Работает в Яндекс Браузере, Chrome, Edge, Arc и других браузерах на Chromium (Manifest V3).
@@ -181,9 +182,10 @@ lib/constants.js      уровни критичности
 icons/                иконки расширения (PNG) и их исходники (icon.svg, icon-16.svg)
 tests/                автотесты (node:test + jsdom), см. «Тесты»
 scripts/badges.js     прогон наборов тестов и обновление плашек в README
+scripts/changelog-prepend.js  CHANGELOG.md и черновик релиза на GitHub, см. «Релизы»
 package.json          зависимости и команды для тестов (на работу расширения не влияет)
 .githooks/            pre-commit: тесты перед каждым коммитом
-.github/              CI: тесты на каждый push и pull request
+.github/              CI: тесты на каждый push и pull request, черновик и публикация релиза
 ```
 
 ## Тесты
@@ -196,6 +198,7 @@ npm test             # все тесты, ~10 секунд
 npm run test:watch   # перезапуск при сохранении файлов
 npm run test:coverage  # покрытие кода
 npm run badges       # прогнать наборы и обновить плашки в начале README
+npm run changelog-prepend  # собрать раздел CHANGELOG.md для текущей версии (см. «Релизы»)
 npm run hooks:install  # тесты перед каждым git commit (после git init)
 ```
 
@@ -211,6 +214,7 @@ npm run hooks:install  # тесты перед каждым git commit (посл
 | Utils | `tests/unit/constants.test.js`, `tests/unit/url.test.js` | уровни критичности, проверка и очистка ссылок |
 | Popup | `tests/pages/popup.test.js` | окно расширения: создание ревью, выбор элемента, экспорт, список ревью, состояние папки |
 | Pages | `tests/pages/review.test.js`, `tests/pages/report-setup.test.js` | страница ревью (поиск, сортировка, правка, удаление, папка), страница отчёта, первый запуск |
+| Release | `tests/unit/changelog.test.js` | CHANGELOG.md и черновик релиза: разбор коммитов, группы, русские формулировки и склонения, повторная сборка без дублей, черновик и публикация через GitHub API |
 | Integrity | `tests/integrity/project.test.js` | манифест и все пути, синтаксис, импорты, CSP, иконки, синхронность копий кода в `content.js`, типы сообщений, этот README и плашки |
 
 Тесты целостности ловят то, что легко упустить при правках. Например: копия списка критичностей или `normalizeUrl` в `content/content.js` разошлась с `lib/`; в коде используется несуществующая иконка; файл переименован, а ссылка в манифесте или README осталась старой; новый тестовый файл не попал ни в одну плашку.
@@ -220,7 +224,30 @@ npm run hooks:install  # тесты перед каждым git commit (посл
 - `normalizeUrl('mailto:a@b.ru')` превращается в `https://mailto:a@b.ru/`, а `normalizeUrl('123')` — в `https://0.0.0.123/`.
 - Описание в `manifest.json` занимает 143 символа, а Chrome Web Store принимает не больше 132.
 
-Плашки в начале README обновляет `npm run badges`: «passing» появляется только после реального успешного прогона набора. Если в репозитории на GitHub включены Actions, тесты запускаются на каждый push и pull request (`.github/workflows/tests.yml`).
+Плашки в начале README обновляет `npm run badges`: «passing» появляется только после реального успешного прогона набора. Если в репозитории на GitHub включены Actions, тесты запускаются на каждый push и pull request на Node.js 22, 24 и 26 (`.github/workflows/tests.yml`). После push в основную ветку workflow сам запускает `npm run badges` и коммитит обновлённые плашки, если они изменились. Версия на плашке release — последний опубликованный релиз из [GitHub Releases](https://github.com/allakin/Design-review-checker/releases): берётся самый старший тег в формате semver (`v1.2.3`), черновики и пре-релизы не учитываются. Плашка пересобирается и при публикации, правке или удалении релиза. Если релизов ещё нет или GitHub недоступен, на плашке версия из `manifest.json`. Для этого в настройках репозитория (Settings → Actions → General → Workflow permissions) должно быть разрешено «Read and write permissions».
+
+## Релизы
+
+Работа идёт в ветке `develop`, релиз выходит после принятия pull request из `develop` в `main` (`.github/workflows/release.yml`).
+
+1. **Каждый push в `develop`.** `npm run changelog-prepend -- --draft` собирает по коммитам с последнего релиза раздел для версии из `manifest.json`. Скрипт вставляет его в начало `CHANGELOG.md` (бот коммитит файл в `develop`) и создаёт или обновляет черновик релиза `vX.Y.Z` на GitHub.
+2. **Pull request `develop → main` принят.** Черновик публикуется как есть, тег ставится на merge-коммит в `main`, плашка Release в README обновляется. Если версию в `manifest.json` не подняли, а в `main` пришли новые коммиты, job падает и релиз не публикуется.
+
+Перед pull request в `main` поднимите `version` в `manifest.json` и `package.json`. Пока версия не поднята, черновик не собирается: прошлая версия уже выпущена.
+
+Черновик пишется по-русски и коротко: строка «Коротко: 2 новые возможности и 1 исправление», затем пункты по группам (ломающие изменения, новое, исправления, улучшения, изменения). Тесты, CI и рефакторинг сворачиваются в одну строку. Текст пунктов берётся из сообщений коммитов:
+
+- `feat:`, `fix:`, `perf:`, `refactor:`, `docs:`, `test:`, `ci:`, `chore:` ([Conventional Commits](https://www.conventionalcommits.org/ru/)) задают группу, `feat!:` или `BREAKING CHANGE:` в теле — ломающее изменение. Без префикса группа определяется по глаголу: «Исправить …» — исправления, «Добавить …» — новое.
+- «Добавить экспорт в PDF» превращается в «Добавили экспорт в PDF». В релиз попадает только первое предложение, а префикс и скоуп отбрасываются.
+- Строка `Релиз: <текст для пользователей>` в теле коммита заменяет текст пункта. `Релиз: -` скрывает коммит из релиза. Коммиты бота и коммиты «Поднять версию до …» не попадают в релиз сами.
+- Пункты без русского текста (например, «Initial commit») скрипт показывает в логе как предупреждение: их стоит переписать.
+
+Раздел текущей версии в `CHANGELOG.md` и текст черновика пересобираются на каждый push в `develop`. Ручные правки в них до публикации перезаписываются, поэтому надёжнее задавать формулировку строкой `Релиз:` в коммите. Правки черновика, сделанные после последнего push в `develop`, при публикации сохраняются.
+
+```bash
+npm run changelog-prepend                 # обновить CHANGELOG.md локально
+npm run changelog-prepend -- --dry-run    # показать раздел и черновик, ничего не меняя
+```
 
 ## Иконки
 

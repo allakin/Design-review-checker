@@ -9,6 +9,7 @@
     "test:watch": "node --test --watch \"tests/**/*.test.js\"",
     "test:coverage": "node --test --experimental-test-coverage --test-coverage-exclude=\"tests/**\" --test-coverage-exclude=\"scripts/**\" \"tests/**/*.test.js\"",
     "badges": "node scripts/badges.js",
+    "changelog-prepend": "node scripts/changelog-prepend.js",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "devDependencies": {

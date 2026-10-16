@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { ICONS } from '../../lib/icons.js';
 import { SEVERITIES } from '../../lib/constants.js';
-import { SUITES, badgesMarkdown, replaceBlock } from '../../scripts/badges.js';
+import { SUITES, badgesMarkdown, replaceBlock, repoSlug, parseVersion, pickLatestRelease, resolveRelease } from '../../scripts/badges.js';
 
 const ROOT = new URL('../../', import.meta.url);
 const path = (p) => new URL(p, ROOT);
@@ -272,11 +272,12 @@ describe('тесты и плашки', () => {
     for (const f of covered) assert.ok(exists(f), `в SUITES указан несуществующий ${f}`);
   });
 
-  test('в README есть блок плашек с версией из manifest.json и всеми наборами', () => {
+  test('в README есть блок плашек с версией релиза и всеми наборами', () => {
     const readme = read('README.md');
     const block = readme.split('<!-- badges:start -->')[1]?.split('<!-- badges:end -->')[0];
     assert.ok(block, 'нет блока <!-- badges:start --> … <!-- badges:end -->');
-    assert.ok(block.includes(`release-v${manifest.version}-`), 'версия на плашке не совпадает с manifest.json — запустите npm run badges');
+    const version = block.match(/badge\/release-v(.+?)-2ea44f/)?.[1]?.replace(/--/g, '-');
+    assert.ok(version && parseVersion(version), 'на плашке release нет версии в формате semver — запустите npm run badges');
     for (const s of SUITES) assert.ok(block.includes(`[${s.label}`) || block.includes(`![${s.label}`), s.label);
   });
 
@@ -289,6 +290,51 @@ describe('тесты и плашки', () => {
     assert.match(broken, /All%20tests-failing-e05d44/);
     assert.match(broken, /Store%20tests-failing/);
     assert.match(broken, /Report%20tests-passing/);
+  });
+
+  test('плашка release ведёт на страницу релиза, если она известна', () => {
+    const okRun = { code: 0, tests: 1, pass: 1, fail: 0, todo: 0 };
+    const url = 'https://github.com/o/r/releases/tag/v1.2.0';
+    assert.ok(badgesMarkdown('1.2.0', SUITES.map(() => okRun), url).includes(`[![Release](https://img.shields.io/badge/release-v1.2.0-2ea44f?logo=github&logoColor=white)](${url})`));
+    assert.ok(badgesMarkdown('1.2.0', SUITES.map(() => okRun)).includes('\n![Release]('));
+  });
+
+  test('релиз: из списка берётся самый старший опубликованный semver', () => {
+    const rel = (tag_name, extra = {}) => ({ tag_name, html_url: `https://github.com/o/r/releases/tag/${tag_name}`, draft: false, prerelease: false, ...extra });
+    const latest = pickLatestRelease([
+      rel('v1.2.0'),
+      rel('v1.10.0'),
+      rel('v1.9.3'),
+      rel('v2.0.0', { draft: true }),
+      rel('v1.11.0-beta.1', { prerelease: true }),
+      rel('nightly'),
+    ]);
+    assert.deepEqual(latest, { version: '1.10.0', url: 'https://github.com/o/r/releases/tag/v1.10.0' });
+    assert.equal(pickLatestRelease([rel('1.0.0-rc.1'), rel('1.0.0')]).version, '1.0.0');
+    assert.equal(pickLatestRelease([]), null);
+    assert.equal(pickLatestRelease([rel('v3.0.0', { draft: true })]), null);
+  });
+
+  test('релиз: репозиторий определяется по GITHUB_REPOSITORY и адресу origin', () => {
+    assert.equal(repoSlug('allakin/Design-review-checker'), 'allakin/Design-review-checker');
+    assert.equal(repoSlug('https://github.com/allakin/Design-review-checker.git\n'), 'allakin/Design-review-checker');
+    assert.equal(repoSlug('git@github.com:allakin/Design-review-checker.git'), 'allakin/Design-review-checker');
+    assert.equal(repoSlug('https://github.com/o/r'), 'o/r');
+    assert.equal(repoSlug('https://gitlab.com/o/r.git'), null);
+  });
+
+  test('релиз: без релизов или без сети — версия из manifest.json', async () => {
+    const reply = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 403, statusText: ok ? 'OK' : 'Forbidden', json: async () => body });
+    const found = await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: reply([{ tag_name: 'v1.4.2', html_url: 'u', draft: false, prerelease: false }]) });
+    assert.equal(found.version, '1.4.2');
+    assert.equal(found.url, 'u');
+    assert.equal((await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: reply([]) })).version, '1.0.0');
+    const denied = await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: reply({}, false) });
+    assert.equal(denied.version, '1.0.0');
+    assert.match(denied.source, /403/);
+    const offline = await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: async () => { throw new Error('offline'); } });
+    assert.equal(offline.version, '1.0.0');
+    assert.equal(offline.url, 'https://github.com/o/r/releases');
   });
 
   test('генератор заменяет только блок плашек', () => {
