@@ -269,4 +269,4 @@ npm run changelog-prepend -- --dry-run    # показать раздел и ч�
 
 ## Иконки
 
-Иконки интерфейса — [Gravity UI Icons](https://gravity-ui.com/ru/icons) (`@gravity-ui/icons` 2.23.0, MIT, © YANDEX LLC; текст лицензии — `icons/gravity-ui-LICENSE.txt`). SVG встроены в код, расширение ничего не загружает из сети.
+Иконки интерфейса — [Gravity UI Icons](https://gravity-ui.com/ru/icons) (`@gravity-ui/icons` 2.23.0, [MIT](https://github.com/gravity-ui/icons?tab=MIT-1-ov-file), © YANDEX LLC; текст лицензии — `icons/gravity-ui-LICENSE.txt`). SVG встроены в код, расширение ничего не загружает из сети.
