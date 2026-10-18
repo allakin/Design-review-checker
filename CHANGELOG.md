@@ -11,5 +11,6 @@
 
 ### Изменения
 
+- Обновлен readme.md ([1e4bbe4](https://github.com/allakin/Design-review-checker/commit/1e4bbe4c7c2a84e01ad2313ee518b4949d714b78))
 - Обновил скрипты ([fcd4706](https://github.com/allakin/Design-review-checker/commit/fcd47063be3f960539e95424b8fbaa42407e8405))
 - Initial commit ([754cd79](https://github.com/allakin/Design-review-checker/commit/754cd796bae5c916cbeccc306bf7cac982bd8c68))
