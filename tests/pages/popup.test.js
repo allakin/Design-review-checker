@@ -31,6 +31,19 @@ describe('popup: создание ревью', () => {
     assert.equal($('[data-act=back]'), null, 'отмены нет, если ревью ещё не было');
   });
 
+  test('папка не подключена (например, после переустановки) — кнопка восстановления открывает страницу настройки', async () => {
+    const { $, chrome } = await loadPage('popup/popup');
+    assert.match($('.restore').textContent, /Уже делали ревью раньше\?/);
+    $('[data-act=restore]').click();
+    assert.equal(chrome.tabs.create.mock.calls.at(-1).arguments[0].url, chrome.runtime.getURL('pages/setup.html?restore=1'));
+  });
+
+  test('папка подключена — кнопки восстановления нет', async () => {
+    const { $ } = await loadPage('popup/popup', { setup: () => connectFolder(MemDir) });
+    assert.ok($('form#create'));
+    assert.equal($('.restore'), null);
+  });
+
   test('некорректная ссылка на тикет не даёт создать ревью', async () => {
     const { $, window } = await loadPage('popup/popup');
     $('[name=devTicketUrl]').value = 'просто текст';
@@ -120,6 +133,33 @@ describe('popup: текущее ревью', () => {
     assert.equal(window.close.mock.callCount(), 1);
   });
 
+  test('доступа к папке нет — «Выбрать элемент» не запрашивает его из окна (там запрос не показывается) и сразу запускает выбор', async () => {
+    const { $, chrome } = await withReview({ folderPerm: 'prompt' });
+    $('[data-act=pick]').click();
+    await sleep(40);
+    assert.equal((await folder.getDir()).permission, 'prompt');
+    assert.equal(chrome.runtime.sendMessage.mock.calls[0].arguments[0].type, 'drc:startPick');
+  });
+
+  test('«запросить» открывает страницу ревью; «сохранить» с доступом дописывает прямо в окне; иначе — блок папки', async () => {
+    const prompt = await withReview({ folderPerm: 'prompt' });
+    prompt.$('.folder-line').click();
+    await sleep(20);
+    assert.equal(prompt.chrome.tabs.create.mock.calls.at(-1).arguments[0].url, prompt.chrome.runtime.getURL(`pages/review.html?id=${prompt.review.id}`));
+    assert.equal((await folder.getDir()).permission, 'prompt', 'из окна доступ не запрашивается');
+
+    const granted = await withReview();
+    await sleep(20);
+    assert.match(granted.$('.folder-line').textContent, /Не сохранено в «reviews-results»: 1 ревью/);
+    granted.$('.folder-line').click();
+    await sleep(60);
+    assert.equal((await folder.getDir()).list().length, 1);
+    assert.match(granted.$('.folder-line').textContent, /Сохраняется в «reviews-results»/);
+    assert.equal(granted.chrome.tabs.create.mock.callCount(), 0);
+    granted.$('.folder-line').click();
+    assert.equal(granted.chrome.tabs.create.mock.calls.at(-1).arguments[0].url, granted.chrome.runtime.getURL('pages/review.html#folder'));
+  });
+
   test('«3 с» запускает выбор с задержкой', async () => {
     const { $, chrome } = await withReview();
     $('[data-act=pick-delay]').click();
@@ -190,15 +230,38 @@ describe('popup: текущее ревью', () => {
   });
 
   test('строка папки отражает состояние: сохраняется / нет доступа / ошибка / не подключена', async () => {
-    const ok = await withReview();
+    const ok = await withReview({ setup: () => folder.flushUnsaved() });
     assert.match(ok.$('.folder-line').textContent, /Сохраняется в «reviews-results»/);
+    // Страница ревью закрыта — доступа нет: просим запросить разрешение, несохранённое показываем в скобках
     const prompt = await withReview({ folderPerm: 'prompt' });
-    assert.match(prompt.$('.folder-line').textContent, /Нет доступа к «reviews-results»: разрешить/);
+    assert.match(prompt.$('.folder-line').textContent, /Нужно разрешение на запись в «reviews-results» \(не сохранено: 1 ревью\): запросить/);
     assert.ok(prompt.$('.folder-line').classList.contains('warn'));
+    // Доступа нет, всё уже на диске — всё равно просим запросить: новые замечания без него в папку не попадут
+    const saved = await withReview({
+      folderPerm: 'prompt',
+      setup: async () => {
+        const dir = await folder.getDir();
+        dir.permission = 'granted';
+        await folder.flushUnsaved();
+        dir.permission = 'prompt';
+      },
+    });
+    assert.match(saved.$('.folder-line').textContent, /^\s*Нужно разрешение на запись в «reviews-results»: запросить$/);
+    assert.ok(saved.$('.folder-line').classList.contains('warn'));
     const err = await withReview({ setup: () => folder.setStatus({ state: 'error', error: 'boom' }) });
     assert.match(err.$('.folder-line').textContent, /Ошибка записи/);
     const none = await withReview({ folderPerm: null });
     assert.match(none.$('.folder-line').textContent, /подключить reviews-results/);
+  });
+
+  test('подсказка держать страницу ревью открытой: видна при подключённой папке, ссылка открывает страницу ревью', async () => {
+    const { $, chrome, review } = await withReview();
+    assert.equal($('.keep-open').hidden, false);
+    assert.match($('.keep-open').textContent, /держите страницу ревью открытой — иначе браузер забирает разрешение на запись/);
+    $('[data-act=keep-open]').click();
+    assert.equal(chrome.tabs.create.mock.calls.at(-1).arguments[0].url, chrome.runtime.getURL(`pages/review.html?id=${review.id}`));
+    const none = await withReview({ folderPerm: null });
+    assert.equal(none.$('.keep-open').hidden, true);
   });
 
   test('новое замечание из контент-скрипта сразу появляется в окне', async () => {
@@ -229,6 +292,19 @@ describe('popup: все ревью', () => {
     await sleep(30);
     assert.equal(await store.getActiveReviewId(), first.id);
     assert.equal($('.review-card .title').textContent, 'Первое');
+  });
+
+  test('ревью есть, а текущего нет (восстановили из папки) — открывается последнее изменённое, а не форма', async () => {
+    const { $ } = await loadPage('popup/popup', {
+      setup: async () => {
+        await connectFolder(MemDir);
+        await store.importReview({ id: 'a', title: 'Давнее', createdAt: 1, updatedAt: 10, issues: [] });
+        await store.importReview({ id: 'b', title: 'Последнее', createdAt: 2, updatedAt: 20, issues: [] });
+      },
+    });
+    assert.equal($('form#create'), null);
+    assert.equal($('.review-card .title').textContent, 'Последнее');
+    assert.equal(await store.getActiveReviewId(), 'b');
   });
 
   test('«Новое ревью» из списка открывает форму с отменой; ревьюер подставляется', async () => {

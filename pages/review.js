@@ -479,14 +479,28 @@ document.addEventListener('keydown', (e) => e.key === 'Escape' && (lightbox.hidd
 // ---------- Папка для результатов ----------
 
 const folderEl = document.getElementById('folder');
+let restored = null; // итог восстановления ревью из выбранной папки — показываем в блоке папки
+let regainResult = null; // ответ браузера на запрос доступа по клику, если доступ не дали
 
-async function saveAllToFolder(dir) {
-  folderEl.querySelector('.folder-state').textContent = 'Сохраняю…';
+// restore=true — сначала подтянуть ревью, сохранённые в папке раньше (например, до переустановки расширения).
+async function saveAllToFolder(dir, { restore = false } = {}) {
+  folderEl.querySelector('.folder-state').textContent = restore ? 'Ищу сохранённые ревью…' : 'Сохраняю…';
   try {
+    if (restore) restored = await folder.importFromFolder(dir);
     await folder.writeAll(dir, await store.getAllReviews());
   } catch (e) {
     await folder.setStatus({ state: 'error', error: e.message });
   }
+}
+
+function restoredHtml() {
+  if (!restored) return '';
+  if (!restored.found) {
+    return '<div class="folder-state warn">В этой папке нет сохранённых ревью. Сохраняли в другом месте? Нажмите «Сменить» и укажите ту папку</div>';
+  }
+  const summary = folder.importSummary(restored);
+  const warn = restored.failed.length || restored.missingShots;
+  return summary ? `<div class="folder-state ${warn ? 'warn' : 'ok'}">${escapeHtml(summary)}</div>` : '';
 }
 
 async function renderFolder() {
@@ -497,22 +511,26 @@ async function renderFolder() {
   let state;
   let buttons;
   if (!dir) {
-    state = '<div class="folder-state warn">Не подключена. Выберите reviews-results в папке расширения</div>';
+    state = '<div class="folder-state warn">Не подключена. Выберите reviews-results в папке расширения или папку, где уже лежат ваши ревью</div>';
     buttons = `<button class="btn btn-primary" data-act="pick">${icon('folder', 14)} Выбрать reviews-results</button>`;
   } else if (perm !== 'granted') {
-    state = '<div class="folder-state warn">Браузер просит заново разрешить запись в папку</div>';
+    state = regainResult
+      ? `<div class="folder-state err">Браузер не дал доступ по клику (${escapeHtml(regainResult.error || `ответ: ${regainResult.state}`)}). Нажмите «Разрешить доступ»</div>`
+      : '<div class="folder-state warn">Нет доступа к папке. Кликните в любом месте страницы — доступ вернётся (или браузер спросит разрешение)</div>';
     buttons = `<button class="btn btn-primary" data-act="grant">Разрешить доступ</button><button class="btn btn-light" data-act="pick">${icon('folderOpen', 14)} Сменить</button><button class="btn btn-danger" data-act="disconnect">${icon('linkSlash', 14)} Отключить</button>`;
   } else {
     state =
       status.state === 'error'
         ? `<div class="folder-state err">Ошибка записи: ${escapeHtml(status.error)}</div>`
-        : `<div class="folder-state ok">Сохраняется автоматически${status.lastSyncAt ? ` · ${formatDate(status.lastSyncAt)}` : ''}</div>`;
+        : `<div class="folder-state ok">Сохраняется автоматически${status.lastSyncAt ? ` · ${formatDate(status.lastSyncAt)}` : ''}</div>
+           <div class="folder-state">Не закрывайте эту страницу: пока она открыта, ревью сохраняются в папку. После закрытия браузер забирает разрешение на запись.</div>`;
     buttons = `<button class="btn btn-light" data-act="save">${icon('save', 14)} Сохранить сейчас</button><button class="btn btn-light" data-act="pick">${icon('folderOpen', 14)} Сменить</button><button class="btn btn-danger" data-act="disconnect">${icon('linkSlash', 14)} Отключить</button>`;
   }
   folderEl.innerHTML = `
     <div class="folder-title">Папка для результатов</div>
     ${dir ? `<div class="folder-name">${icon('folder')} ${escapeHtml(folder.folderLabel(dir, status))}/</div>` : ''}
     ${state}
+    ${dir ? restoredHtml() : ''}
     <div class="row">${buttons}</div>`;
   folderEl.classList.toggle('attention', !dir || perm !== 'granted');
   updateSideShades();
@@ -525,7 +543,7 @@ async function renderFolder() {
       if (e.name !== 'AbortError') await notify('Не удалось выбрать папку', e.message);
       return;
     }
-    await saveAllToFolder(dir);
+    await saveAllToFolder(dir, { restore: true });
     renderFolder();
   });
   folderEl.querySelector('[data-act=disconnect]')?.addEventListener('click', async () => {
@@ -539,10 +557,11 @@ async function renderFolder() {
     });
     if (!ok) return;
     await folder.disconnectFolder();
+    restored = null;
     renderFolder();
   });
   folderEl.querySelector('[data-act=grant]')?.addEventListener('click', async () => {
-    if ((await folder.permission(dir, true)) === 'granted') await saveAllToFolder(dir);
+    if ((await folder.permission(dir, true)) === 'granted') await saveAllToFolder(dir, { restore: true });
     renderFolder();
   });
   folderEl.querySelector('[data-act=save]')?.addEventListener('click', async () => {
@@ -552,7 +571,18 @@ async function renderFolder() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => area === 'local' && folder.KEY_FOLDER_STATUS in changes && renderFolder());
-renderFolder();
+// Дописываем изменения, сделанные без открытой страницы (например, замечания с сайта). Если доступа нет —
+// просим его при первом клике на странице: с «Разрешать всегда» браузер отдаёт его молча.
+folder.flushUnsaved().finally(async () => {
+  renderFolder();
+  const dir = await folder.getDir();
+  if (dir && (await folder.permission(dir).catch(() => 'prompt')) === 'prompt') {
+    folder.regainAccessOnClick(document, dir, { ignore: '#folder, #danger' }).then((result) => {
+      regainResult = result.state === 'granted' ? null : result;
+      renderFolder();
+    });
+  }
+});
 
 document.getElementById('btn-new').addEventListener('click', async () => {
   const { ok, value: title } = await showDialog({

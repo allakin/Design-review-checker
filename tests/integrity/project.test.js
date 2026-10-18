@@ -122,6 +122,14 @@ describe('скрипты и страницы', () => {
     }
   });
 
+  test('страницы-вкладки показывают фавиконку расширения с версией в адресе (иначе браузер берёт старую из кэша)', () => {
+    for (const f of ['pages/review.html', 'pages/report.html', 'pages/setup.html']) {
+      const href = new JSDOM(read(f)).window.document.querySelector('link[rel=icon]')?.getAttribute('href');
+      assert.match(href || '', /^\.\.\/icons\/icon32\.png\?v=\d+$/, f);
+      assert.ok(existsSync(new URL(href.split('?')[0], path(f))), `${f}: ${href}`);
+    }
+  });
+
   test('страницы расширения не грузят ничего из сети (CSP MV3)', () => {
     for (const f of htmlFiles) assert.doesNotMatch(read(f), /(src|href)="https?:/, f);
     for (const f of jsFiles) assert.doesNotMatch(read(f), /\bfetch\(|XMLHttpRequest|import\(['"]https?:/, f);

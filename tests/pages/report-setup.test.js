@@ -77,6 +77,8 @@ describe('страница отчёта', () => {
 
   test('action=html: ошибка записи в папку — сообщение и скачивание', async () => {
     const page = await report({ withFolder: true });
+    await sleep(30);
+    page.root.children.clear(); // первая страница уже дописала ревью на диск — начинаем с пустой папки
     page.root.failWrites = 'Диск переполнен';
     const again = await loadPage('pages/report', {
       query: `?id=${page.review.id}&action=html`,
@@ -125,6 +127,189 @@ describe('страница первичной настройки', () => {
     assert.match(page.$('.done h2').textContent, /Папка подключена/);
     assert.equal(page.$('.path').textContent, 'Design review checker/reviews-results/');
     assert.match(page.$('.done').textContent, /⌥⇧D/);
+  });
+
+  test('режим восстановления (?restore=1): свой заголовок, пояснение и кнопка', async () => {
+    const { $ } = await loadPage('pages/setup', { query: '?restore=1' });
+    assert.equal($('h1').textContent, 'Восстановите прошлые ревью');
+    assert.equal($('.step').textContent, 'Восстановление');
+    assert.equal($('.restore-intro').hidden, false);
+    assert.equal($('.connect-info').hidden, true, 'длинная инструкция первого запуска скрыта');
+    assert.match($('.restore-intro').textContent, /только для чтения/);
+    assert.match($('[data-act=pick]').textContent, /Выбрать папку с ревью/);
+    const plain = await loadPage('pages/setup');
+    assert.equal(plain.$('.restore-intro').hidden, true);
+    assert.equal(plain.$('.connect-info').hidden, false);
+    assert.equal(plain.$('h1').textContent, 'Подключите папку reviews-results');
+  });
+
+  test('разрешение записи (?grant=1): кнопка запрашивает доступ, дописывает ревью и показывает итог', async () => {
+    let root;
+    const page = await loadPage('pages/setup', {
+      query: '?grant=1',
+      setup: async () => {
+        root = await connectFolder(MemDir, { permission: 'prompt' });
+        await store.createReview({ title: 'Ждало доступа' });
+      },
+    });
+    assert.equal(page.$('h1').textContent, 'Разрешите запись в папку');
+    assert.equal(page.$('.grant-intro').hidden, false);
+    assert.equal(page.$('.connect-info').hidden, true);
+    assert.equal(page.$('[data-act=grant] .label').textContent, 'Разрешить запись в «reviews-results»');
+    assert.equal(page.$('[data-act=grant]').children.length, 2, 'иконка и одна подпись — без лишних flex-элементов');
+    page.$('[data-act=grant]').click();
+    await sleep(80);
+    assert.equal(root.permission, 'granted');
+    assert.match(root.list()[0], /^Ждало доступа — /);
+    assert.equal(page.$('h1').textContent, 'Ревью сохранены на диск');
+    assert.match(page.$('.done h2').textContent, /Записано ревью: 1/);
+    assert.match(page.$('.done .note').textContent, /пока открыта его страница/);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+    page.$('[data-act=close]').click();
+    await sleep(20);
+    assert.equal(page.chrome.tabs.remove.mock.callCount(), 1);
+  });
+
+  test('?grant=1, доступ уже есть (браузер вернул его странице сам) — без кнопки сразу дописывает несохранённое', async () => {
+    let root;
+    const page = await loadPage('pages/setup', {
+      query: '?grant=1',
+      setup: async () => {
+        root = await connectFolder(MemDir);
+        await store.createReview({ title: 'Замечания с сайта' });
+      },
+    });
+    await sleep(80);
+    assert.equal(page.$('[data-act=grant]'), null);
+    assert.match(root.list()[0], /^Замечания с сайта — /);
+    assert.match(page.$('.done h2').textContent, /Записано ревью: 1/);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+  });
+
+  test('разрешение записи: отказ — кнопка остаётся с подсказкой; без папки — обычное подключение', async () => {
+    const page = await loadPage('pages/setup', {
+      query: '?grant=1',
+      setup: async () => {
+        await folder.setDir(new MemDir('reviews-results', { permission: 'prompt', grantOnRequest: false }));
+      },
+    });
+    page.$('[data-act=grant]').click();
+    await sleep(60);
+    assert.ok(page.$('[data-act=grant]'));
+    assert.match(page.$('.error').textContent, /Браузер не дал доступ/);
+
+    const none = await loadPage('pages/setup', { query: '?grant=1' });
+    await sleep(30);
+    assert.equal(none.$('h1').textContent, 'Подключите папку reviews-results');
+    assert.match(none.$('[data-act=pick]').textContent, /Выбрать папку reviews-results/);
+  });
+
+  test('режим восстановления: папка открывается только для чтения, ревью возвращаются, на диск ничего не пишется', async () => {
+    const saved = new MemDir('reviews-results');
+    await folder.writeReview(saved, { id: 'old-r', title: 'Прошлое', createdAt: Date.UTC(2026, 9, 1), updatedAt: Date.UTC(2026, 9, 1), issues: [makeIssue()] });
+    const before = saved.at(saved.list()[0]).list();
+    const page = await loadPage('pages/setup', { query: '?restore=1' });
+    saved.failWrites = 'только чтение'; // любая попытка создать файл упадёт
+    let opts;
+    globalThis.showDirectoryPicker = async (o) => ((opts = o), saved);
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.equal(opts.mode, 'read');
+    assert.match(page.$('.done h2').textContent, /Ревью восстановлены/);
+    assert.equal(page.$('.restored').textContent, 'Восстановлено ревью из папки: 1.');
+    assert.match(page.$('.done').textContent, /Осталось разрешить запись.*нажмите «разрешить»/);
+    assert.equal((await store.getReview('old-r')).title, 'Прошлое');
+    assert.equal(await store.getActiveReviewId(), 'old-r');
+    assert.deepEqual(saved.at(saved.list()[0]).list(), before);
+    assert.notEqual(page.chrome.storage.local.data.get(folder.KEY_FOLDER_STATUS).state, 'error');
+    page.$('[data-act=close]').click();
+    await sleep(20);
+    assert.equal(page.chrome.tabs.remove.mock.callCount(), 1);
+  });
+
+  test('режим восстановления: в папке нет ревью — предлагает выбрать другую', async () => {
+    const page = await loadPage('pages/setup', { query: '?restore=1' });
+    const other = new MemDir('Старые');
+    await folder.writeReview(other, { id: 'o', title: 'Нашлось', createdAt: 0, updatedAt: 0, issues: [] });
+    const picks = [new MemDir('reviews-results'), other];
+    globalThis.showDirectoryPicker = async () => picks.shift();
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(120);
+      assert.match(page.$('.hint').textContent, /нет сохранённых ревью/);
+      assert.match(page.$('[data-act=pick]').textContent, /Выбрать другую папку/);
+      page.$('[data-act=pick]').click();
+      await sleep(120);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.match(page.$('.done h2').textContent, /Ревью восстановлены/);
+    assert.equal((await store.getReview('o')).title, 'Нашлось');
+  });
+
+  test('первый запуск: выбрана папка расширения, в её reviews-results лежат прошлые ревью — подтягиваются сразу', async () => {
+    const ext = new MemDir('Design review checker');
+    const results = await ext.getDirectoryHandle('reviews-results', { create: true });
+    await folder.writeReview(results, { id: 'prev', title: 'Прошлое ревью', createdAt: Date.UTC(2026, 9, 10), updatedAt: Date.UTC(2026, 9, 11), issues: [makeIssue()] });
+    const page = await loadPage('pages/setup'); // новое окружение — как после переустановки
+    globalThis.showDirectoryPicker = async () => ext;
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.equal(page.$('.path').textContent, 'Design review checker/reviews-results/');
+    assert.equal(page.$('.restored').textContent, 'Восстановлено ревью из папки: 1.');
+    assert.equal((await store.getReview('prev')).issues.length, 1);
+    assert.equal(await store.getActiveReviewId(), 'prev');
+    assert.deepEqual(results.list(), ['Прошлое ревью — 2026-10-10'], 'дубликат папки не создаётся');
+  });
+
+  test('после переустановки: выбор папки с сохранёнными ревью восстанавливает их', async () => {
+    const saved = new MemDir('Мои ревью'); // папка с произвольным именем — используется как есть
+    await folder.writeReview(saved, { id: 'old-1', title: 'Старое ревью', createdAt: Date.UTC(2026, 9, 1), updatedAt: Date.UTC(2026, 9, 2), issues: [makeIssue({ title: 'Кнопка' })] });
+    const page = await loadPage('pages/setup'); // новое окружение — chrome.storage пуст
+    globalThis.showDirectoryPicker = async () => saved;
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.equal(page.$('.path').textContent, 'Мои ревью/');
+    assert.equal(page.$('.restored').textContent, 'Восстановлено ревью из папки: 1.');
+    assert.equal(page.$('.hint'), null);
+    const restored = await store.getReview('old-1');
+    assert.equal(restored.issues[0].title, 'Кнопка');
+    assert.match(restored.issues[0].screenshot, /^data:image\/png;base64,/);
+    assert.deepEqual(saved.list(), ['Старое ревью — 2026-10-01'], 'дубликат папки не создаётся');
+  });
+
+  test('в выбранной папке нет сохранённых ревью — предлагает указать другую', async () => {
+    const page = await loadPage('pages/setup');
+    const empty = new MemDir('reviews-results');
+    const other = new MemDir('Старые ревью');
+    await folder.writeReview(other, { id: 'old-2', title: 'Найдено', createdAt: 0, updatedAt: 0, issues: [] });
+    const picks = [empty, other];
+    globalThis.showDirectoryPicker = async () => picks.shift();
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(120);
+      assert.match(page.$('.hint').textContent, /нет сохранённых ревью/);
+      assert.equal(page.$('.restored'), null);
+      page.$('.hint [data-act=pick]').click();
+      await sleep(120);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.equal(page.$('.hint'), null);
+    assert.equal(page.$('.path').textContent, 'Старые ревью/');
+    assert.equal((await store.getReview('old-2')).title, 'Найдено');
   });
 
   test('отмена системного диалога — без ошибки; прочие ошибки показываются', async () => {

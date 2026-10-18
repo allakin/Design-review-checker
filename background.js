@@ -112,7 +112,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // Автосохранение в папку на диске: любое изменение ревью (новое замечание, правка, удаление)
-// через секунду записывается в выбранную папку.
+// через секунду записывается в выбранную папку, если браузер сейчас даёт к ней доступ.
 const syncTimers = new Map();
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;

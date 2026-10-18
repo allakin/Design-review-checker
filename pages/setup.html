@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>Design Review — папка для результатов</title>
-  <link rel="icon" href="../icons/icon32.png">
+  <link rel="icon" href="../icons/icon32.png?v=2">
   <link rel="stylesheet" href="setup.css">
 </head>
 <body>
@@ -11,6 +11,17 @@
     <div class="brand"><img src="../icons/icon48.png" alt="" width="24" height="24"> Design Review</div>
     <div class="step">Первый запуск</div>
     <h1>Подключите папку reviews-results</h1>
+    <div class="restore-intro" hidden>
+      <p>Выберите папку с прошлыми ревью — по умолчанию это <code>reviews-results</code> в папке расширения.</p>
+      <p class="note">Папка откроется только для чтения. Разрешение на запись браузер попросит позже, в окне расширения.</p>
+    </div>
+
+    <div class="grant-intro" hidden>
+      <p>Нажмите кнопку и в запросе браузера выберите «Разрешать всегда» (<i>Allow on every visit</i>) —
+        больше он спрашивать не будет.</p>
+    </div>
+
+    <div class="connect-info">
     <p>
       Результаты ревью сохраняются в папку <code>reviews-results</code>, которая лежит в папке расширения.
       Браузер разрешает расширению писать на диск только в папку, которую вы один раз укажете сами, —
@@ -30,6 +41,12 @@
       (если её нет, расширение создаст). Содержимое <code>reviews-results</code> уже исключено в <code>.gitignore</code>
       и в репозиторий не попадёт.
     </p>
+
+    <p class="note">
+      Переустановили расширение или сохраняли результаты в другую папку? Выберите папку, где лежат ваши ревью, —
+      сохранённые в ней ранее ревью подтянутся обратно вместе со скриншотами.
+    </p>
+    </div>
 
     <div id="state"></div>
   </main>

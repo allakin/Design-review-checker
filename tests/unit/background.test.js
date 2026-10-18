@@ -255,8 +255,9 @@ describe('автосохранение в папку', () => {
       assert.match(sub, /^Текущее — /);
       const json = JSON.parse(root.at(`${sub}/review.json`).text());
       assert.equal(json.issues.length, 2);
-      // одна синхронизация: подпапка ревью запрашивается один раз
-      assert.equal(write.mock.calls.filter((c) => c.this === root).length, 1);
+      // одна синхронизация: подпапка ревью открывается на запись один раз
+      // (без create — только проверка, не занято ли имя чужой папкой на диске)
+      assert.equal(write.mock.calls.filter((c) => c.this === root && c.arguments[1]?.create).length, 1);
     } finally {
       write.mock.restore();
     }

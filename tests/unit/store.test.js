@@ -84,6 +84,48 @@ describe('чтение', () => {
   });
 });
 
+describe('importReview', () => {
+  test('сохраняет ревью как есть, с исходной датой изменения; новое ревью не становится текущим', async () => {
+    const review = { id: 'r-old', title: 'С диска', author: '', devTicketUrl: '', designTicketUrl: '', createdAt: 1000, updatedAt: 2000, issues: [makeIssue()] };
+    assert.equal(await store.importReview(review), true);
+    assert.equal((await store.getReview('r-old')).updatedAt, 2000);
+    const [meta] = await store.listReviews();
+    assert.deepEqual([meta.id, meta.updatedAt, meta.issueCount], ['r-old', 2000, 1]);
+    assert.equal(await store.getActiveReviewId(), null);
+  });
+
+  test('существующее ревью не перезаписывается', async () => {
+    const live = await store.createReview({ title: 'Живое' });
+    assert.equal(await store.importReview({ ...live, title: 'С диска', issues: [] }), false);
+    assert.equal((await store.getReview(live.id)).title, 'Живое');
+    assert.equal((await store.listReviews()).length, 1);
+  });
+});
+
+describe('activeOrLatestReview', () => {
+  test('есть текущее — возвращает его', async () => {
+    const a = await store.createReview({ title: 'A' });
+    await store.createReview({ title: 'B' });
+    await store.setActiveReviewId(a.id);
+    assert.equal((await store.activeOrLatestReview()).id, a.id);
+  });
+  test('текущего нет — делает текущим последнее изменённое', async () => {
+    await store.importReview({ id: 'old', title: 'Старое', createdAt: 1, updatedAt: 10, issues: [] });
+    await store.importReview({ id: 'new', title: 'Свежее', createdAt: 2, updatedAt: 20, issues: [] });
+    assert.equal((await store.activeOrLatestReview()).id, 'new');
+    assert.equal(await store.getActiveReviewId(), 'new');
+  });
+  test('текущее удалено — берёт последнее из оставшихся', async () => {
+    const a = await store.createReview({ title: 'A' });
+    const b = await store.createReview({ title: 'B' });
+    await store.deleteReview(b.id);
+    assert.equal((await store.activeOrLatestReview()).id, a.id);
+  });
+  test('ревью нет — null', async () => {
+    assert.equal(await store.activeOrLatestReview(), null);
+  });
+});
+
 describe('updateReview', () => {
   test('меняет поля, обновляет updatedAt и индекс', async () => {
     const r = await store.createReview({ title: 'A' });

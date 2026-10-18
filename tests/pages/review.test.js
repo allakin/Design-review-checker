@@ -393,6 +393,34 @@ describe('папка для результатов', () => {
     assert.match(page.$('#folder').textContent, /Сохраняется автоматически/);
   });
 
+  test('выбор папки подтягивает сохранённые в ней ревью и показывает итог', async () => {
+    const page = await seed({ withFolder: false });
+    const saved = new MemDir('reviews-results');
+    await folder.writeReview(saved, { id: 'disk-1', title: 'С диска', createdAt: Date.UTC(2026, 0, 1), updatedAt: Date.UTC(2026, 0, 1), issues: [] });
+    saved.put('Битое/review.json', '{');
+    globalThis.showDirectoryPicker = async () => saved;
+    try {
+      page.$('#folder [data-act=pick]').click();
+      await sleep(200);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.ok(titles(page.$$).includes('С диска'));
+    assert.match(page.$('#folder .folder-state.warn').textContent, /Восстановлено ревью из папки: 1\. Не удалось прочитать review\.json в папках: Битое\./);
+  });
+
+  test('в выбранной папке нет сохранённых ревью — подсказка указать другую', async () => {
+    const page = await seed({ withFolder: false });
+    globalThis.showDirectoryPicker = async () => new MemDir('reviews-results');
+    try {
+      page.$('#folder [data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.match(page.$('#folder').textContent, /нет сохранённых ревью.*«Сменить»/);
+  });
+
   test('отмена системного диалога выбора — без сообщений', async () => {
     const page = await seed({ withFolder: false });
     globalThis.showDirectoryPicker = async () => {
@@ -409,11 +437,46 @@ describe('папка для результатов', () => {
 
   test('нет разрешения — «Разрешить доступ» запрашивает его и сохраняет ревью', async () => {
     const page = await seed({ permission: 'prompt' });
-    assert.match(page.$('#folder').textContent, /заново разрешить запись/);
+    assert.match(page.$('#folder').textContent, /Нет доступа к папке\. Кликните в любом месте страницы/);
     page.$('#folder [data-act=grant]').click();
     await sleep(100);
     assert.equal(page.root.permission, 'granted');
     assert.equal(page.root.list().length, 3);
+  });
+
+  test('нет разрешения — первый клик в любом месте страницы молча возвращает доступ и дописывает несохранённое', async () => {
+    const page = await seed({ permission: 'prompt' });
+    await sleep(30);
+    assert.deepEqual(page.root.list(), [], 'до клика ничего не пишется и не запрашивается');
+    assert.equal(page.root.permission, 'prompt');
+    page.$('#main').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await sleep(120);
+    assert.equal(page.root.permission, 'granted');
+    assert.equal(page.root.list().length, 3);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+    assert.match(page.$('#folder').textContent, /Сохраняется автоматически/);
+  });
+
+  test('браузер не дал доступ по клику — блок папки показывает его ответ', async () => {
+    const page = await seed({ permission: 'prompt' });
+    page.root.grantOnRequest = false;
+    await sleep(30);
+    page.$('#main').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await sleep(80);
+    assert.match(page.$('#folder .folder-state.err').textContent, /Браузер не дал доступ по клику \(ответ: prompt\)/);
+  });
+
+  test('клик по блоку папки не запускает фоновый запрос доступа (там свои кнопки)', async () => {
+    const page = await seed({ permission: 'prompt' });
+    await sleep(30);
+    page.$('#folder').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await sleep(60);
+    assert.equal(page.root.permission, 'prompt');
+  });
+
+  test('с доступом блок папки просит не закрывать страницу', async () => {
+    const page = await seed();
+    assert.match(page.$('#folder').textContent, /Не закрывайте эту страницу: пока она открыта, ревью сохраняются в папку/);
   });
 
   test('«Сохранить сейчас» пишет все ревью', async () => {

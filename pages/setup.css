@@ -74,3 +74,8 @@ button { font: inherit; cursor: pointer; border: 0; border-radius: 12px; color: 
 .gi { display: inline-block; flex: none; vertical-align: -3px; }
 .btn, .done h2 { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
 .done h2 { display: flex; justify-content: flex-start; }
+
+.restored { color: var(--ok); }
+.hint { background: rgba(245, 199, 107, .07); border: 1px solid rgba(245, 199, 107, .22); border-radius: 12px; padding: 10px 14px; margin: 0 0 12px; font-size: 14px; }
+.link { background: none; padding: 0; border-radius: 0; color: var(--accent-soft); text-decoration: underline; text-underline-offset: 2px; }
+.link:hover { color: var(--accent); }
