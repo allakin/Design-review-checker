@@ -4,17 +4,17 @@
 [![Browser extension](https://img.shields.io/badge/Browser-extension-e05d44?logo=googlechrome&logoColor=white)](#установка)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285f4?logo=googlechrome&logoColor=white)
 [![Release](https://img.shields.io/badge/release-v1.0.0-2ea44f?logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/releases)
-[![All tests: 374](https://img.shields.io/badge/All%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Store tests: 37/37](https://img.shields.io/badge/Store%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![All tests: 430](https://img.shields.io/badge/All%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Store tests: 43/43](https://img.shields.io/badge/Store%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Report tests: 41/41](https://img.shields.io/badge/Report%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Folder tests: 44/44](https://img.shields.io/badge/Folder%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Folder tests: 72/72](https://img.shields.io/badge/Folder%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Background tests: 27/27](https://img.shields.io/badge/Background%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Content script tests: 77/77](https://img.shields.io/badge/Content%20script%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Utils tests: 18/18](https://img.shields.io/badge/Utils%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Popup tests: 23/23](https://img.shields.io/badge/Popup%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Pages tests: 47/47](https://img.shields.io/badge/Pages%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Popup tests: 29/29](https://img.shields.io/badge/Popup%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Pages tests: 62/62](https://img.shields.io/badge/Pages%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 [![Release tests: 19/19](https://img.shields.io/badge/Release%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Integrity tests: 38/38](https://img.shields.io/badge/Integrity%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
+[![Integrity tests: 39/39](https://img.shields.io/badge/Integrity%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
 <!-- badges:end -->
 
 **Расширение для браузера**, чтобы проводить дизайн-ревью вёрстки прямо на живой странице: сравнивать реализацию с макетом, фиксировать расхождения и отдавать разработчику готовый отчёт. Работает в Яндекс Браузере, Chrome, Edge, Arc и других браузерах на Chromium (Manifest V3).
@@ -99,6 +99,8 @@ Design review checker/
 | Экспорт | В окне расширения выберите HTML или PDF → «Экспортировать» |
 | Сменить папку результатов | Страница ревью → блок «Папка для результатов» → «Сменить» |
 | Отвязать папку | Там же → «Отключить»: файлы на диске остаются, новые изменения туда не пишутся; для новых ревью папку нужно подключить заново |
+| Восстановить ревью после переустановки | Окно расширения → «Восстановить ревью из папки» → укажите `reviews-results` или папку, где лежат ревью (см. «Переустановка расширения и своя папка для результатов») |
+| Дописать несохранённое в папку | Окно расширения → строка папки: «запросить» откроет страницу ревью, где доступ возвращается первым кликом; «сохранить» дописывает сразу |
 | Найти ревью | Страница ревью → поле поиска в левой панели: по названию, ревьюеру, ссылкам на тикеты, названиям замечаний и страниц; можно несколько слов, `Esc` очищает |
 | Отсортировать список | Там же: «Недавно изменённые», «Сначала новые / старые», «По названию», «Больше замечаний» — выбор запоминается |
 | Удалить ревью из списка | Наведите на ревью в левой панели → корзина. Как и «Удалить ревью» в шапке, удаляет и его папку в `reviews-results` |
@@ -158,6 +160,7 @@ reviews-results/
 - Новое ревью не пишется поверх чужой подпапки с тем же именем, даже если расширение о ней не знает (например, после переустановки): для него создаётся «(2)».
 - Кнопка «Удалить ревью» на странице ревью удаляет и его папку в `reviews-results` (отчёт, `review.json`, скриншоты); в окне подтверждения видно, какая папка будет удалена. Остальные ревью и `.gitkeep` не затрагиваются.
 - Писать в выбранную папку браузер разрешает, только пока открыта страница расширения, и только после клика на ней. Окно расширения и фоновый скрипт не в счёт, а разрешить запись навсегда Яндекс Браузер расширению не даёт: после закрытия страниц он снова спрашивает «Save changes…?». Поэтому замечания, добавленные с сайта, попадают в папку, когда вы откроете страницу ревью и кликнете на ней. Когда страница ревью закрыта, окно расширения показывает «Нужно разрешение на запись в «reviews-results»: запросить» (и сколько ревью ещё не сохранено) — по клику откроется страница ревью, где доступ возвращается первым кликом. Поэтому во время ревью держите страницу ревью открытой — об этом напоминают окно расширения и блок папки.
+- Страницы ревью и отчёта при открытии сами дописывают в папку всё, что накопилось, пока они были закрыты. Если доступа нет, блок папки пишет «Нет доступа к папке. Кликните в любом месте страницы» — первый клик возвращает доступ (или браузер спросит разрешение), и несохранённое дописывается. Если доступ есть, но что-то не записано, окно расширения показывает «Не сохранено в «reviews-results»: N ревью — сохранить» и по клику дописывает само.
 
 Подробности — [docs/file-access-permissions.md](docs/file-access-permissions.md).
 
@@ -172,7 +175,8 @@ reviews-results/
 
 - На служебных страницах (`browser://`, `chrome://`, магазин расширений) браузер запрещает расширениям работать.
 - Содержимое кросс-доменных `iframe` выбирается только целиком, как один блок.
-- Данные хранятся локально в `chrome.storage` этого профиля браузера и ничего не отправляется в сеть. Если удалить расширение, ревью удалятся вместе с ним; копия остаётся только в папке для результатов, если она выбрана.
+- Данные хранятся локально в `chrome.storage` этого профиля браузера и ничего не отправляется в сеть. Если удалить расширение, ревью пропадут из его списка. Файлы в папке для результатов останутся, и из неё ревью можно восстановить (см. «Переустановка расширения и своя папка для результатов»). Ревью, которые ни разу не попали в папку, восстановить нельзя.
+- Писать в папку на диске браузер разрешает, только пока открыта страница расширения. Поэтому замечания, сделанные при закрытой странице ревью, ждут, пока вы её откроете (см. «Сохранение в папку на диске»).
 
 ## Структура
 
