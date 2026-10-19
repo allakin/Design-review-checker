@@ -1,6 +1,7 @@
 name: Release
 
 # Работа идёт в develop: на каждый push собирается раздел CHANGELOG.md и черновик релиза v<версия из manifest.json>.
+# Если эта версия уже выпущена, а расширение с неё менялось, бот сам поднимает версию (patch / minor / major по коммитам).
 # Принят pull request develop → main — черновик публикуется, тег ставится на merge-коммит в main.
 # Нужно разрешение «Read and write permissions» (Settings → Actions → General → Workflow permissions).
 on:
@@ -35,21 +36,27 @@ jobs:
         with:
           node-version: 24
 
-      - name: Prepend CHANGELOG.md and sync release draft
+      - name: Bump version if needed, prepend CHANGELOG.md and sync release draft
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/changelog-prepend.js --draft
+        run: node scripts/changelog-prepend.js --draft --bump
 
-      - name: Commit CHANGELOG.md if changed
+      - name: Commit version and CHANGELOG.md if changed
         run: |
-          if git diff --quiet -- CHANGELOG.md && [ -z "$(git ls-files --others --exclude-standard -- CHANGELOG.md)" ]; then
-            echo "CHANGELOG.md не изменился."
+          FILES="CHANGELOG.md manifest.json package.json package-lock.json"
+          if git diff --quiet -- $FILES && [ -z "$(git ls-files --others --exclude-standard -- CHANGELOG.md)" ]; then
+            echo "Версия и CHANGELOG.md не изменились."
             exit 0
+          fi
+          MESSAGE="Обновить CHANGELOG.md [skip ci]"
+          if ! git diff --quiet -- manifest.json; then
+            VERSION=$(node -p "require('./manifest.json').version")
+            MESSAGE="Поднять версию до $VERSION и обновить CHANGELOG.md [skip ci]"
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CHANGELOG.md
-          git commit -m "Обновить CHANGELOG.md [skip ci]"
+          git add $FILES
+          git commit -m "$MESSAGE"
           git pull --rebase origin "$BRANCH"
           git push origin "HEAD:$BRANCH"
 

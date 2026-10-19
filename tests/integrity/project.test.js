@@ -39,8 +39,11 @@ describe('manifest.json', () => {
     assert.ok(manifest.description.length <= 132, `${manifest.description.length} символов`);
   });
 
-  test('версия в manifest.json и package.json совпадает', () => {
+  test('версия в manifest.json, package.json и package-lock.json совпадает', () => {
     assert.equal(JSON.parse(read('package.json')).version, manifest.version);
+    const lock = JSON.parse(read('package-lock.json'));
+    assert.equal(lock.version, manifest.version, 'package-lock.json');
+    assert.equal(lock.packages[''].version, manifest.version, 'package-lock.json → packages[""]');
   });
 
   test('все файлы, на которые ссылается манифест, существуют', () => {
