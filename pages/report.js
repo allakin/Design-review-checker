@@ -65,3 +65,8 @@ async function main() {
 }
 
 main();
+// Дописываем изменения, сделанные без открытой страницы; без доступа — просим его при первом клике.
+folder.flushUnsaved().then(async () => {
+  const dir = await folder.getDir();
+  if (dir && (await folder.permission(dir).catch(() => 'prompt')) === 'prompt') folder.regainAccessOnClick(document, dir);
+});

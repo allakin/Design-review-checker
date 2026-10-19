@@ -1,5 +1,16 @@
 import * as store from './lib/store.js';
 import { syncReview, getDir } from './lib/folder.js';
+import { codeFingerprint, REOPEN_KEY } from './lib/code-version.js';
+
+// Отпечаток кода, с которым запущен фоновый скрипт: страница ревью сверяет его со своим (см. lib/code-version.js).
+const startedWith = codeFingerprint();
+
+// После «Перезагрузить расширение» на странице ревью открываем её снова — перезагрузка закрывает страницы расширения.
+chrome.storage.local.get(REOPEN_KEY).then(async ({ [REOPEN_KEY]: url }) => {
+  if (!url) return;
+  await chrome.storage.local.remove(REOPEN_KEY);
+  if (url.startsWith(chrome.runtime.getURL(''))) await chrome.tabs.create({ url });
+}, () => {});
 
 // captureVisibleTab ограничен ~2 вызовами в секунду — держим интервал с запасом.
 const CAPTURE_INTERVAL_MS = 600;
@@ -93,6 +104,9 @@ async function handle(msg, sender) {
       return { number, review: reviewMeta(review) };
     }
 
+    case 'drc:codeVersion':
+      return { fingerprint: await startedWith };
+
     case 'drc:openReview':
       await chrome.tabs.create({ url: chrome.runtime.getURL(`pages/review.html?id=${encodeURIComponent(msg.reviewId)}`) });
       return {};
@@ -112,7 +126,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // Автосохранение в папку на диске: любое изменение ревью (новое замечание, правка, удаление)
-// через секунду записывается в выбранную папку.
+// через секунду записывается в выбранную папку, если браузер сейчас даёт к ней доступ.
 const syncTimers = new Map();
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;

@@ -1,12 +1,16 @@
 import * as store from '../lib/store.js';
 import { SEVERITIES, severityOf } from '../lib/constants.js';
-import { escapeHtml, formatDate, specsHtml, SPECS_CSS } from '../lib/report.js';
+import { escapeHtml, formatDate, specsHtml, SPECS_CSS, LIGHTBOX_CSS, MD_CSS, fixImagesOf, installLightbox, lightboxIcons } from '../lib/report.js';
 import * as folder from '../lib/folder.js';
 import { normalizeUrl, safeHref } from '../lib/url.js';
 import { icon } from '../lib/icons.js';
+import { editorHtml, mountEditor } from './md-editor.js';
+import { codeFingerprint, REOPEN_KEY } from '../lib/code-version.js';
 
 const main = document.getElementById('main');
-document.head.append(Object.assign(document.createElement('style'), { textContent: SPECS_CSS }));
+document.head.append(Object.assign(document.createElement('style'), { textContent: SPECS_CSS + LIGHTBOX_CSS + MD_CSS }));
+// Слайдшоу по картинкам «Визуальные пояснения» — тот же просмотрщик, что в HTML-отчёте.
+installLightbox(document, lightboxIcons(), { selector: '.fix-thumb img' });
 document.getElementById('btn-new').innerHTML = `${icon('plus', 14)} Новое ревью`;
 const list = document.getElementById('review-list');
 const lightbox = document.getElementById('lightbox');
@@ -23,19 +27,25 @@ function flashSaved() {
   savedTimer = setTimeout(() => savedEl.classList.remove('show'), 1000);
 }
 
-async function write(fn) {
-  lastLocalWrite = Date.now();
-  await fn();
-  lastLocalWrite = Date.now();
-  flashSaved();
-}
-
 function debounce(fn, ms) {
   let t = 0;
   return (...args) => {
     clearTimeout(t);
     t = setTimeout(() => fn(...args), ms);
   };
+}
+
+// Страховка автосохранения: в папку пишет фоновый скрипт (через секунду после изменения), но браузер может
+// остановить его посреди записи. Через пару секунд дописываем отсюда то, что так и не попало на диск;
+// уже сохранённое не трогается, а записи с фоновым скриптом идут по очереди (lib/folder.js).
+const flushSoon = debounce(() => folder.flushUnsaved(), 2500);
+
+async function write(fn) {
+  lastLocalWrite = Date.now();
+  await fn();
+  lastLocalWrite = Date.now();
+  flashSaved();
+  flushSoon();
 }
 
 function chip(sev, text = sev.label) {
@@ -379,14 +389,17 @@ function issueHtml(issue, k, total) {
   const el = issue.element || {};
   return `
   <article class="issue" id="${issue.id}" data-issue="${issue.id}" style="--fg:${sev.color}">
-    <div>
-      ${issue.screenshot ? `<div class="shot" data-act="zoom"><img src="${escapeHtml(issue.screenshot)}" alt=""></div>` : ''}
-      ${issue.screenshotTruncated ? '<div class="shot-note">Элемент снят не целиком — он слишком большой</div>' : ''}
-      ${issue.screenshotNote ? `<div class="shot-note">${escapeHtml(issue.screenshotNote)}</div>` : ''}
+    <span class="num issue-num" title="Замечание №${k + 1}">#${k + 1}</span>
+    <div class="aside">
+      <div class="shot-wrap">
+        ${issue.screenshot ? `<div class="field-label">Скриншот области с сайта</div><div class="shot" data-act="zoom"><img src="${escapeHtml(issue.screenshot)}" alt=""></div>` : ''}
+        ${issue.screenshotTruncated ? '<div class="shot-note">Элемент снят не целиком — он слишком большой</div>' : ''}
+        ${issue.screenshotNote ? `<div class="shot-note">${escapeHtml(issue.screenshotNote)}</div>` : ''}
+      </div>
+      ${fixBlockHtml(issue, k)}
     </div>
     <div class="form">
       <div class="form-head">
-        <span class="num">#${k + 1}</span>
         <input type="text" data-field="title" maxlength="200" placeholder="Название">
         <button class="icon-btn" data-act="up" title="Выше" ${k === 0 ? 'disabled' : ''}>${icon('up')}</button>
         <button class="icon-btn" data-act="down" title="Ниже" ${k === total - 1 ? 'disabled' : ''}>${icon('down')}</button>
@@ -400,7 +413,7 @@ function issueHtml(issue, k, total) {
       </div>
       <div class="field">
         <div class="field-label">Описание</div>
-        <textarea data-field="description" placeholder="Что не так и как должно быть"></textarea>
+        ${editorHtml({ placeholder: 'Что не так и как должно быть. Поддерживается Markdown: **жирный**, _курсив_, - список, # заголовок' })}
       </div>
       <div class="field">
         <div class="field-label">Ссылка на макет</div>
@@ -417,20 +430,201 @@ function issueHtml(issue, k, total) {
 }
 
 
+// Блок «Визуальные пояснения»: высота фиксирована, картинки прокручиваются внутри; клик — слайдшоу.
+function fixBlockHtml(issue, k) {
+  const images = fixImagesOf(issue);
+  const caption = (j) => `#${k + 1} · Визуальные пояснения · ${j + 1} из ${images.length}`;
+  return `
+      <section class="fix" data-fix>
+        <div class="fix-head">
+          <span class="field-label">Визуальные пояснения</span>
+          ${images.length ? `<span class="fix-count">${images.length}</span>` : ''}
+          <span class="spacer"></span>
+          <button class="fix-add-btn" data-act="fix-add" title="Добавить картинки">${icon('plus', 14)} Добавить</button>
+          <input type="file" accept="image/*" multiple hidden data-fix-input>
+        </div>
+        ${
+          images.length
+            ? `<div class="fix-body" data-lb-group>${images
+                .map(
+                  (img, j) => `<div class="fix-thumb" data-fix-id="${escapeHtml(img.id)}">
+              <img src="${escapeHtml(img.src)}" alt="" data-caption="${escapeHtml(caption(j))}" title="Открыть слайдшоу">
+              <button class="fix-del" data-act="fix-del" title="Удалить картинку">${icon('xmark', 14)}</button>
+            </div>`,
+                )
+                .join('')}<button class="fix-tile-add" data-act="fix-add" title="Добавить картинки">${icon('plus', 20)}</button></div>`
+            : `<button class="fix-body fix-empty" data-act="fix-add">${icon('camera', 22)}<b>Добавьте картинки</b><span>Перетащите сюда, вставьте из буфера (${PASTE_KEY}) или выберите файлы</span></button>`
+        }
+        <div class="fix-drop">${icon('download', 20)} Отпустите, чтобы добавить</div>
+      </section>`;
+}
+
+const PASTE_KEY = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '') ? '⌘V' : 'Ctrl+V';
+const MAX_IMAGE_SIDE = 2400; // большие картинки уменьшаем: они хранятся в расширении и встраиваются в отчёт
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+// Файл → data URL PNG/JPEG (только такие отчёт встраивает). Другие форматы (WebP, GIF…) перерисовываем в PNG,
+// слишком большие — уменьшаем.
+async function imageFileToDataUrl(file) {
+  const src = await readAsDataUrl(file);
+  const native = /^data:image\/(png|jpeg);base64,/.test(src);
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    if (native) return src;
+    throw new Error(`не удалось прочитать картинку «${file.name || 'без имени'}»`);
+  }
+  const k = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+  if (native && k === 1) {
+    bitmap.close?.();
+    return src;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * k));
+  canvas.height = Math.max(1, Math.round(bitmap.height * k));
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  return canvas.toDataURL(file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', 0.92);
+}
+
+async function addFixFiles(review, issue, files) {
+  const images = [...files].filter((f) => f.type.startsWith('image/'));
+  if (!images.length) {
+    if (files.length) await notify('Это не картинки', 'В блок «Визуальные пояснения» можно добавить PNG, JPEG, WebP, GIF и другие изображения.');
+    return;
+  }
+  const added = [];
+  const failed = [];
+  for (const file of images) {
+    try {
+      added.push({ src: await imageFileToDataUrl(file), name: file.name || '' });
+    } catch (e) {
+      failed.push(e.message);
+    }
+  }
+  if (added.length) await write(() => store.addFixImages(review.id, issue.id, added));
+  render();
+  if (failed.length) await notify('Не все картинки добавлены', failed.join('\n'));
+}
+
+// Вставка из буфера: картинка попадает в замечание, где стоит фокус, а если фокуса нет — над которым курсор.
+let hoveredIssue = null;
+main.addEventListener('pointerover', (e) => (hoveredIssue = e.target.closest?.('[data-issue]')?.dataset.issue || null));
+main.addEventListener('pointerleave', () => (hoveredIssue = null));
+document.addEventListener('paste', async (e) => {
+  const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+  if (!files.length) return;
+  const issueId = document.activeElement?.closest?.('[data-issue]')?.dataset.issue || hoveredIssue;
+  if (!issueId) return;
+  e.preventDefault(); // сразу: иначе картинка вставится в редактор описания
+  const review = await store.getReview(currentId);
+  const issue = review?.issues.find((i) => i.id === issueId);
+  if (issue) addFixFiles(review, issue, files);
+});
+// Картинку, брошенную мимо блока, браузер открыл бы вместо страницы ревью.
+for (const type of ['dragover', 'drop']) {
+  document.addEventListener(type, (e) => {
+    if ([...(e.dataTransfer?.types || [])].includes('Files') && !e.target.closest?.('[data-fix]')) e.preventDefault();
+  });
+}
+
+// Адрес ссылки для редактора описания. null — отмена, '' — убрать ссылку.
+async function askLink(current) {
+  const { ok, value } = await showDialog({
+    label: 'Ссылка',
+    labelIcon: 'link',
+    question: current ? 'Изменить ссылку' : 'Добавить ссылку',
+    note: 'Оставьте поле пустым, чтобы убрать ссылку.',
+    input: { value: current, placeholder: 'https://…' },
+    confirmText: 'Готово',
+    confirmClass: 'btn-primary',
+  });
+  if (!ok) return null;
+  if (!value.trim()) return '';
+  const link = normalizeUrl(value);
+  if (link.ok && link.url) return link.url;
+  await notify('Некорректная ссылка', 'Нужен адрес вида https://…');
+  return null;
+}
+
+function bindFix(card, review, issue) {
+  const block = card.querySelector('[data-fix]');
+  const input = block.querySelector('[data-fix-input]');
+  block.querySelectorAll('[data-act=fix-add]').forEach((btn) => btn.addEventListener('click', () => input.click()));
+  input.addEventListener('change', () => {
+    const files = [...input.files];
+    input.value = '';
+    addFixFiles(review, issue, files);
+  });
+
+  let depth = 0; // dragenter/dragleave приходят и от вложенных элементов
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+  block.addEventListener('dragenter', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth++;
+    block.classList.add('drop');
+  });
+  block.addEventListener('dragover', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  block.addEventListener('dragleave', () => {
+    if (--depth <= 0) {
+      depth = 0;
+      block.classList.remove('drop');
+    }
+  });
+  block.addEventListener('drop', (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    block.classList.remove('drop');
+    addFixFiles(review, issue, e.dataTransfer.files);
+  });
+
+  block.querySelectorAll('[data-act=fix-del]').forEach((btn) =>
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const imageId = btn.closest('[data-fix-id]').dataset.fixId;
+      const { ok } = await showDialog({
+        question: 'Удалить картинку из визуальных пояснений?',
+        note: 'Картинка пропадёт из замечания, отчёта и папки на диске. Восстановить её не получится — только добавить заново.',
+        confirmText: 'Удалить',
+        confirmIcon: 'trash',
+      });
+      if (!ok) return;
+      await write(() => store.deleteFixImage(review.id, issue.id, imageId));
+      render();
+    }),
+  );
+}
+
 function bindIssue(card, review, issue) {
+  bindFix(card, review, issue);
   const f = (name) => card.querySelector(`[data-field=${name}]`);
   f('title').value = issue.title;
-  f('description').value = issue.description || '';
   f('mockupUrl').value = issue.mockupUrl || '';
 
   const save = debounce(() => {
     const link = normalizeUrl(f('mockupUrl').value);
     f('mockupUrl').classList.toggle('invalid', !link.ok);
-    const patch = { title: f('title').value.trim() || 'Без названия', description: f('description').value.trim() };
+    const patch = { title: f('title').value.trim() || 'Без названия', description: editor.getValue().trim() };
     if (link.ok) patch.mockupUrl = link.url;
     write(() => store.updateIssue(review.id, issue.id, patch));
   }, 400);
-  for (const name of ['title', 'description', 'mockupUrl']) f(name).addEventListener('input', save);
+  for (const name of ['title', 'mockupUrl']) f(name).addEventListener('input', save);
+  const editor = mountEditor(card.querySelector('[data-md]'), { value: issue.description || '', onChange: save, askLink });
 
   card.querySelectorAll('[data-sev]').forEach((btn) =>
     btn.addEventListener('click', async () => {
@@ -476,17 +670,58 @@ function openReport(id, action) {
 lightbox.addEventListener('click', () => (lightbox.hidden = true));
 document.addEventListener('keydown', (e) => e.key === 'Escape' && (lightbox.hidden = true));
 
+// ---------- Фоновый скрипт на старом коде ----------
+// Автосохранение в папку делает фоновый скрипт. Если файлы расширения обновили, а само расширение не
+// перезагрузили, он продолжает работать на старом коде и пишет на диск данные в старом формате.
+async function checkBackgroundCode() {
+  const mine = await codeFingerprint();
+  if (!mine) return;
+  const reply = await chrome.runtime.sendMessage({ type: 'drc:codeVersion' }).catch(() => null);
+  if (!reply || reply.fingerprint === mine) return;
+  // Старый фоновый скрипт этого сообщения не знает и отвечает ошибкой — это тоже старый код.
+  if (reply.ok !== false && !reply.fingerprint) return;
+  const bar = document.createElement('div');
+  bar.className = 'stale-bg';
+  bar.setAttribute('role', 'alert');
+  bar.innerHTML = `${icon('warning', 18)}
+    <div class="stale-text"><b>Расширение обновилось, но не перезагружено</b>
+      <span>Фоновая часть работает на старой версии, поэтому автосохранение может записывать в папку неполные данные. Перезагрузите расширение — страница откроется снова.</span></div>
+    <button class="btn btn-primary" data-act="reload-ext">Перезагрузить расширение</button>`;
+  bar.querySelector('[data-act=reload-ext]').addEventListener('click', async () => {
+    // Всё, что записал старый код, после перезагрузки перезапишется заново.
+    await chrome.storage.local.remove('folderSynced');
+    await chrome.storage.local.set({ [REOPEN_KEY]: location.href });
+    chrome.runtime.reload();
+  });
+  document.body.append(bar);
+}
+checkBackgroundCode();
+
 // ---------- Папка для результатов ----------
 
 const folderEl = document.getElementById('folder');
+let restored = null; // итог восстановления ревью из выбранной папки — показываем в блоке папки
+let regainResult = null; // ответ браузера на запрос доступа по клику, если доступ не дали
 
-async function saveAllToFolder(dir) {
-  folderEl.querySelector('.folder-state').textContent = 'Сохраняю…';
+// restore=true — сначала подтянуть ревью, сохранённые в папке раньше (например, до переустановки расширения).
+async function saveAllToFolder(dir, { restore = false } = {}) {
+  folderEl.querySelector('.folder-state').textContent = restore ? 'Ищу сохранённые ревью…' : 'Сохраняю…';
   try {
+    if (restore) restored = await folder.importFromFolder(dir);
     await folder.writeAll(dir, await store.getAllReviews());
   } catch (e) {
     await folder.setStatus({ state: 'error', error: e.message });
   }
+}
+
+function restoredHtml() {
+  if (!restored) return '';
+  if (!restored.found) {
+    return '<div class="folder-state warn">В этой папке нет сохранённых ревью. Сохраняли в другом месте? Нажмите «Сменить» и укажите ту папку</div>';
+  }
+  const summary = folder.importSummary(restored);
+  const warn = restored.failed.length || restored.missingShots;
+  return summary ? `<div class="folder-state ${warn ? 'warn' : 'ok'}">${escapeHtml(summary)}</div>` : '';
 }
 
 async function renderFolder() {
@@ -497,22 +732,26 @@ async function renderFolder() {
   let state;
   let buttons;
   if (!dir) {
-    state = '<div class="folder-state warn">Не подключена. Выберите reviews-results в папке расширения</div>';
+    state = '<div class="folder-state warn">Не подключена. Выберите reviews-results в папке расширения или папку, где уже лежат ваши ревью</div>';
     buttons = `<button class="btn btn-primary" data-act="pick">${icon('folder', 14)} Выбрать reviews-results</button>`;
   } else if (perm !== 'granted') {
-    state = '<div class="folder-state warn">Браузер просит заново разрешить запись в папку</div>';
+    state = regainResult
+      ? `<div class="folder-state err">Браузер не дал доступ по клику (${escapeHtml(regainResult.error || `ответ: ${regainResult.state}`)}). Нажмите «Разрешить доступ»</div>`
+      : '<div class="folder-state warn">Нет доступа к папке. Кликните в любом месте страницы — доступ вернётся (или браузер спросит разрешение)</div>';
     buttons = `<button class="btn btn-primary" data-act="grant">Разрешить доступ</button><button class="btn btn-light" data-act="pick">${icon('folderOpen', 14)} Сменить</button><button class="btn btn-danger" data-act="disconnect">${icon('linkSlash', 14)} Отключить</button>`;
   } else {
     state =
       status.state === 'error'
         ? `<div class="folder-state err">Ошибка записи: ${escapeHtml(status.error)}</div>`
-        : `<div class="folder-state ok">Сохраняется автоматически${status.lastSyncAt ? ` · ${formatDate(status.lastSyncAt)}` : ''}</div>`;
+        : `<div class="folder-state ok">Сохраняется автоматически${status.lastSyncAt ? ` · ${formatDate(status.lastSyncAt)}` : ''}</div>
+           <div class="folder-state">Не закрывайте эту страницу: пока она открыта, ревью сохраняются в папку. После закрытия браузер забирает разрешение на запись.</div>`;
     buttons = `<button class="btn btn-light" data-act="save">${icon('save', 14)} Сохранить сейчас</button><button class="btn btn-light" data-act="pick">${icon('folderOpen', 14)} Сменить</button><button class="btn btn-danger" data-act="disconnect">${icon('linkSlash', 14)} Отключить</button>`;
   }
   folderEl.innerHTML = `
     <div class="folder-title">Папка для результатов</div>
     ${dir ? `<div class="folder-name">${icon('folder')} ${escapeHtml(folder.folderLabel(dir, status))}/</div>` : ''}
     ${state}
+    ${dir ? restoredHtml() : ''}
     <div class="row">${buttons}</div>`;
   folderEl.classList.toggle('attention', !dir || perm !== 'granted');
   updateSideShades();
@@ -525,7 +764,7 @@ async function renderFolder() {
       if (e.name !== 'AbortError') await notify('Не удалось выбрать папку', e.message);
       return;
     }
-    await saveAllToFolder(dir);
+    await saveAllToFolder(dir, { restore: true });
     renderFolder();
   });
   folderEl.querySelector('[data-act=disconnect]')?.addEventListener('click', async () => {
@@ -539,10 +778,11 @@ async function renderFolder() {
     });
     if (!ok) return;
     await folder.disconnectFolder();
+    restored = null;
     renderFolder();
   });
   folderEl.querySelector('[data-act=grant]')?.addEventListener('click', async () => {
-    if ((await folder.permission(dir, true)) === 'granted') await saveAllToFolder(dir);
+    if ((await folder.permission(dir, true)) === 'granted') await saveAllToFolder(dir, { restore: true });
     renderFolder();
   });
   folderEl.querySelector('[data-act=save]')?.addEventListener('click', async () => {
@@ -552,7 +792,18 @@ async function renderFolder() {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => area === 'local' && folder.KEY_FOLDER_STATUS in changes && renderFolder());
-renderFolder();
+// Дописываем изменения, сделанные без открытой страницы (например, замечания с сайта). Если доступа нет —
+// просим его при первом клике на странице: с «Разрешать всегда» браузер отдаёт его молча.
+folder.flushUnsaved().finally(async () => {
+  renderFolder();
+  const dir = await folder.getDir();
+  if (dir && (await folder.permission(dir).catch(() => 'prompt')) === 'prompt') {
+    folder.regainAccessOnClick(document, dir, { ignore: '#folder, #danger' }).then((result) => {
+      regainResult = result.state === 'granted' ? null : result;
+      renderFolder();
+    });
+  }
+});
 
 document.getElementById('btn-new').addEventListener('click', async () => {
   const { ok, value: title } = await showDialog({

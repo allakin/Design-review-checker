@@ -119,7 +119,7 @@ button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; color: 
   display: grid; grid-template-columns: minmax(220px, 38%) 1fr; gap: 32px;
   background: var(--card-bg);
   border: 1px solid var(--line);
-  border-radius: 20px; padding: 26px; margin-bottom: 20px;
+  border-radius: 20px; padding: 30px 26px 26px; margin: 34px 0 20px;
   box-shadow: var(--card-shadow);
 }
 /* Полоска критичности слева */
@@ -140,8 +140,15 @@ button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; color: 
 .shot-note { font-size: 11px; color: var(--text-3); margin-top: 8px; }
 .form { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
 .form-head { display: flex; align-items: center; gap: 8px; }
-.form-head .num { font-weight: 600; color: var(--text-3); font-size: 15px; min-width: 36px; font-variant-numeric: tabular-nums; }
 .form-head .icon-btn:first-of-type { margin-left: 4px; }
+/* Номер замечания — «ярлык» на верхней кромке карточки слева, в цвете критичности */
+.issue-num {
+  position: absolute; top: -15px; left: 22px; z-index: 1; height: 30px; min-width: 52px; padding: 0 12px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: 700 16px/1 Inter, -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: -.01em; font-variant-numeric: tabular-nums;
+  color: var(--sev-text); background: color-mix(in srgb, var(--sev) 22%, #1b1b1b);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sev) 70%, transparent), 0 0 18px color-mix(in srgb, var(--sev) 35%, transparent), 0 6px 16px rgba(0, 0, 0, .4);
+}
 .field { display: flex; flex-direction: column; gap: 8px; }
 .form-head input { flex: 1; font: 600 17px/1.3 sans-serif; font-family: inherit; letter-spacing: -.01em; }
 .form input[type=text], .form input[type=url], .form textarea {
@@ -270,3 +277,92 @@ button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; color: 
 .btn-delete { background: linear-gradient(180deg, #f04438, #d92d20); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .2), 0 8px 22px rgba(217, 45, 32, .35); }
 .btn-delete:hover { background: linear-gradient(180deg, #f6604f, #e0392b); }
 .form > .specs { margin-top: 0; }
+
+/* Левая колонка карточки: скриншот + «Визуальные пояснения» */
+.issue > .aside { display: flex; flex-direction: column; gap: 18px; min-width: 0; align-self: start; }
+.shot-wrap { display: flex; flex-direction: column; gap: 10px; }
+.shot-wrap > .field-label { min-height: 28px; display: flex; align-items: center; }
+.shot-wrap .shot-note { margin-top: -2px; }
+.fix { position: relative; display: flex; flex-direction: column; gap: 10px; }
+.fix-head { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.fix-head .spacer { flex: 1; }
+.fix-count { font-size: 11px; font-weight: 600; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-variant-numeric: tabular-nums; }
+.fix-add-btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; color: var(--accent-soft); background: transparent; border-radius: 8px; transition: background .12s, color .12s; }
+.fix-add-btn:hover { background: var(--accent-bg); color: #fff; }
+/* Фиксированная высота: картинки прокручиваются внутри, карточка не растёт */
+.fix-body {
+  height: 236px; overflow-y: auto; overscroll-behavior: contain; padding: 8px; border-radius: 14px; border: 1px solid var(--line);
+  background: rgba(0, 0, 0, .22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-auto-rows: 104px; gap: 8px;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .12) transparent;
+}
+.fix-thumb { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); transition: border-color .15s, transform .15s;
+  background: repeating-conic-gradient(rgba(255, 255, 255, .045) 0 25%, transparent 0 50%) 0 0 / 12px 12px, rgba(0, 0, 0, .25); }
+.fix-thumb:hover { border-color: var(--line-strong); }
+.fix-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
+.fix-del { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border-radius: 7px;
+  background: rgba(16, 16, 16, .82); color: var(--text-2); opacity: 0; transition: opacity .12s, background .12s, color .12s; box-shadow: 0 0 0 1px var(--line-strong); }
+.fix-thumb:hover .fix-del, .fix-del:focus-visible { opacity: 1; }
+.fix-del:hover { background: #d92d20; color: #fff; }
+.fix-tile-add { display: grid; place-items: center; border-radius: 10px; border: 1px dashed var(--line-strong); background: transparent; color: var(--text-3); transition: border-color .15s, color .15s, background .15s; }
+.fix-tile-add:hover { border-color: var(--accent); color: var(--accent-soft); background: var(--accent-bg); }
+.fix-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; text-align: center; width: 100%; color: var(--text-3); border-style: dashed; border-color: var(--line-strong); padding: 16px 20px; transition: border-color .15s, background .15s, color .15s; }
+.fix-empty b { color: var(--text-2); font-weight: 600; font-size: 13px; }
+.fix-empty span { font-size: 12px; max-width: 260px; }
+.fix-empty:hover { border-color: var(--accent); background: var(--accent-bg); color: var(--accent-soft); }
+.fix-empty:hover b { color: var(--text); }
+/* Подсветка при перетаскивании файлов */
+.fix-drop { display: none; position: absolute; left: 0; right: 0; bottom: 0; height: 236px; border-radius: 14px; border: 2px dashed var(--accent);
+  background: rgba(13, 40, 28, .88); color: var(--accent-soft); font-weight: 600; font-size: 13px; place-items: center; align-content: center; gap: 8px; pointer-events: none; }
+.fix.drop .fix-drop { display: grid; justify-items: center; }
+
+/* ---------- Редактор описания (pages/md-editor.js) ---------- */
+.md-ed { border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .035); transition: border-color .15s, box-shadow .15s, background .15s; }
+.md-ed:hover { border-color: var(--line-strong); }
+.md-ed:focus-within { border-color: var(--accent); box-shadow: var(--ring); background: rgba(255, 255, 255, .05); }
+.md-toolbar { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.md-tool, .md-mode { height: 28px; min-width: 28px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 7px; background: transparent; color: var(--text-3); transition: background .12s, color .12s; }
+.md-tool:hover, .md-mode:hover { background: var(--surface-hover); color: var(--text); }
+.md-sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 5px; }
+.md-spacer { flex: 1; }
+.md-mode { font-size: 12px; font-weight: 600; padding: 0 8px; }
+.md-mode[aria-pressed=true] { background: var(--accent-bg); color: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(62, 207, 142, .35); }
+/* Поле растягивается мышью за правый нижний угол, как и textarea */
+.md-ed .md-visual, .form .md-ed .md-source {
+  display: block; width: 100%; min-height: 120px; max-height: 70vh; overflow: auto; resize: vertical; padding: 10px 12px;
+  border: 0; border-radius: 0 0 12px 12px; background: transparent; box-shadow: none; color: var(--text); font: 14px/1.55 sans-serif; font-family: inherit;
+}
+.form .md-ed .md-source { font: 13px/1.6 var(--mono); }
+.form .md-ed .md-source:focus, .form .md-ed .md-source:hover { border: 0; box-shadow: none; background: transparent; }
+.md-visual:focus { outline: none; }
+.md-visual.is-empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; position: absolute; }
+.md-visual.is-empty { position: relative; }
+.md-ed[data-mode=source] .md-tool { opacity: .85; }
+
+/* Отформатированный текст в тёмной теме (базовые отступы — MD_CSS из lib/report.js) */
+.md-ed .md-visual h1, .md-ed .md-visual h2, .md-ed .md-visual h3 { color: #fff; }
+.md-ed .md-visual code { background: rgba(0, 0, 0, .35); border-color: var(--line-strong); color: #f5d0a9; }
+.md-ed .md-visual pre { background: rgba(0, 0, 0, .35); border-color: var(--line); }
+/* Внутри блока кода — без плашек inline-кода (иначе каждая строка подсвечена отдельно) */
+.md-ed .md-visual pre code { color: var(--text); background: none; border: 0; padding: 0; border-radius: 0; }
+.md-ed .md-visual pre[data-lang]::before { color: var(--text-3); }
+.md-ed .md-visual blockquote + blockquote { margin-top: -8px; padding-top: 0; }
+.md-ed .md-visual blockquote { border-left-color: rgba(62, 207, 142, .5); color: var(--text-2); }
+.md-ed .md-visual hr { border-top-color: var(--line-strong); }
+.md-ed .md-visual a { color: var(--accent-soft); }
+.md-ed .md-visual li.todo::before { border-color: var(--text-3); background: transparent; cursor: pointer; }
+.md-ed .md-visual li.todo[data-checked="true"]::before { background-color: #16a34a; border-color: #16a34a; }
+.md-ed .md-visual li.todo[data-checked="true"] { color: var(--text-3); text-decoration-color: rgba(255, 255, 255, .35); }
+
+/* Предупреждение: фоновый скрипт на старом коде (pages/review.js → checkBackgroundCode) */
+.stale-bg {
+  position: fixed; top: 16px; left: calc(280px + (100vw - 280px) / 2); transform: translateX(-50%); z-index: 200;
+  width: min(760px, calc(100vw - 320px)); display: flex; align-items: center; gap: 14px; padding: 14px 16px;
+  border-radius: 14px; border: 1px solid rgba(245, 199, 107, .45); color: var(--text);
+  background: linear-gradient(180deg, rgba(64, 48, 16, .96), rgba(40, 32, 14, .96)); backdrop-filter: blur(12px);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .55);
+}
+.stale-bg > .gi { color: var(--warn); }
+.stale-text { flex: 1; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-2); }
+.stale-text b { font-size: 14px; color: var(--text); font-weight: 600; }
+.stale-bg .btn { white-space: nowrap; }

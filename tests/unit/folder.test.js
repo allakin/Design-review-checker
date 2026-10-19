@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { installEnv, makeIssue, makeReview, PNG, PNG_2, JPEG } from '../helpers/env.js';
 import { MemDir } from '../helpers/fs.js';
 import * as folder from '../../lib/folder.js';
+import * as store from '../../lib/store.js';
 
 let chrome;
 const status = () => chrome.storage.local.data.get(folder.KEY_FOLDER_STATUS);
@@ -85,6 +86,43 @@ describe('connectResultsFolder', () => {
     assert.deepEqual(dir.list(), ['.gitkeep']);
   });
 
+  test('папка с другим именем, где уже лежат ревью, используется как есть', async () => {
+    const picked = new MemDir('Мои ревью');
+    await folder.writeReview(picked, makeReview({ title: 'Старое' }));
+    const { dir, project } = await folder.connectResultsFolder(picked);
+    assert.equal(dir, picked);
+    assert.equal(project, '');
+    assert.equal(picked.has('reviews-results'), false);
+    assert.equal(status().dirName, 'Мои ревью');
+  });
+
+  test('только чтение: в папке расширения без reviews-results ничего не создаётся', async () => {
+    const picked = new MemDir('ext');
+    const { dir, project } = await folder.connectResultsFolder(picked, { readOnly: true });
+    assert.equal(dir, picked);
+    assert.equal(project, '');
+    assert.deepEqual(picked.list(), []);
+  });
+
+  test('только чтение: существующая reviews-results внутри подхватывается', async () => {
+    const picked = new MemDir('ext');
+    picked.put('reviews-results/.gitkeep', '');
+    const { dir, project } = await folder.connectResultsFolder(picked, { readOnly: true });
+    assert.equal(dir, picked.at('reviews-results'));
+    assert.equal(project, 'ext');
+  });
+
+  test('pickResultsFolder({ readOnly }) просит у браузера только чтение', async () => {
+    let opts;
+    globalThis.showDirectoryPicker = async (o) => ((opts = o), new MemDir('reviews-results'));
+    try {
+      await folder.pickResultsFolder({ readOnly: true });
+      assert.deepEqual(opts, { id: 'drc-results', mode: 'read' });
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+  });
+
   test('pickResultsFolder открывает системный диалог с режимом записи', async () => {
     let opts;
     globalThis.showDirectoryPicker = async (o) => ((opts = o), new MemDir('reviews-results'));
@@ -111,6 +149,29 @@ describe('permission', () => {
   test('denied не перезапрашивается', async () => {
     const dir = new MemDir('d', { permission: 'denied' });
     assert.equal(await folder.permission(dir, true), 'denied');
+  });
+});
+
+describe('requestAccess', () => {
+  test('разрешили — дописывает все ревью из хранилища', async () => {
+    const root = await connected('prompt');
+    await store.createReview({ title: 'Копилось без доступа' });
+    assert.equal(await folder.requestAccess(root), 'granted');
+    assert.match(root.list()[0], /^Копилось без доступа — /);
+    assert.equal(status().state, 'ok');
+  });
+  test('отказали — ничего не пишет', async () => {
+    const root = new MemDir('reviews-results', { permission: 'prompt', grantOnRequest: false });
+    await store.createReview({ title: 'X' });
+    assert.equal(await folder.requestAccess(root), 'prompt');
+    assert.deepEqual(root.list(), []);
+  });
+  test('ошибка записи после разрешения — статус error, исключения нет', async () => {
+    const root = await connected('prompt');
+    root.failWrites = 'Только чтение';
+    await store.addIssue((await store.createReview({ title: 'X' })).id, makeIssue());
+    assert.equal(await folder.requestAccess(root), 'granted');
+    assert.equal(status().state, 'error');
   });
 });
 
@@ -259,6 +320,27 @@ describe('writeReview', () => {
     assert.equal(file.writes, 2);
   });
 
+  test('словарь имён потерян: чужую папку с тем же именем не перезаписывает', async () => {
+    const root = new MemDir('reviews-results');
+    const old = makeReview({ title: 'Ревью', createdAt: Date.UTC(2026, 0, 2), issues: [makeIssue({ title: 'Старое' })] });
+    const sub = await folder.writeReview(root, old);
+    const oldShots = root.list(`${sub}/screenshots`);
+    chrome.storage.local.data.delete('folderNames'); // как после переустановки расширения
+    const fresh = makeReview({ title: 'Ревью', createdAt: Date.UTC(2026, 0, 2), issues: [makeIssue({ title: 'Новое' })] });
+    assert.equal(await folder.writeReview(root, fresh), 'Ревью — 2026-01-02 (2)');
+    assert.deepEqual(root.list(`${sub}/screenshots`), oldShots);
+    assert.equal(JSON.parse(root.at(`${sub}/review.json`).text()).id, old.id);
+  });
+
+  test('словарь имён потерян: своя папка (тот же id в review.json) переиспользуется', async () => {
+    const root = new MemDir('reviews-results');
+    const review = makeReview({ title: 'Своё' });
+    const sub = await folder.writeReview(root, review);
+    chrome.storage.local.data.delete('folderNames');
+    assert.equal(await folder.writeReview(root, review), sub);
+    assert.deepEqual(root.list(), [sub]);
+  });
+
   test('ошибка записи пробрасывается', async () => {
     const root = new MemDir('reviews-results');
     root.failWrites = 'Диск только для чтения';
@@ -284,7 +366,9 @@ describe('syncReview (фоновое автосохранение)', () => {
   test('успех → файлы записаны, статус ok с подпапкой и временем', async () => {
     const root = await connected();
     const before = Date.now();
-    await folder.syncReview(makeReview({ title: 'Синк' }));
+    const review = makeReview({ title: 'Синк' });
+    await store.importReview(review);
+    await folder.syncReview(review);
     const s = status();
     assert.equal(s.state, 'ok');
     assert.match(s.lastFolder, /^Синк — /);
@@ -296,8 +380,25 @@ describe('syncReview (фоновое автосохранение)', () => {
   test('ошибка записи → статус error, исключение не выбрасывается', async () => {
     const root = await connected();
     root.failWrites = 'Нет места на диске';
-    await folder.syncReview(makeReview({ issues: [makeIssue()] }));
+    const review = makeReview({ issues: [makeIssue()] });
+    await store.importReview(review);
+    await folder.syncReview(review);
     assert.deepEqual({ state: status().state, error: status().error }, { state: 'error', error: 'Нет места на диске' });
+  });
+
+  test('ревью, удалённое до записи, не воскрешается на диске', async () => {
+    const root = await connected();
+    await folder.syncReview(makeReview({ title: 'Удалённое' }));
+    assert.deepEqual(root.list(), []);
+  });
+
+  test('пишется свежая версия из хранилища, а не устаревший объект', async () => {
+    const root = await connected();
+    const review = makeReview({ title: 'Версии' });
+    await store.importReview(review);
+    await store.updateReview(review.id, { author: 'Новый автор' });
+    await folder.syncReview(review);
+    assert.equal(JSON.parse(root.at(`${status().lastFolder}/review.json`).text()).author, 'Новый автор');
   });
 });
 
@@ -415,4 +516,338 @@ describe('deleteReviewFolder', () => {
 
 test('RESULTS_DIR совпадает с папкой в репозитории', () => {
   assert.equal(folder.RESULTS_DIR, 'reviews-results');
+});
+
+describe('importFromFolder (восстановление после переустановки)', () => {
+  // Пишем ревью на диск, затем «переустанавливаем» расширение — новое окружение с пустым chrome.storage.
+  async function savedThenReinstalled(reviews) {
+    const root = new MemDir('reviews-results');
+    for (const r of reviews) await folder.writeReview(root, r);
+    ({ chrome } = installEnv());
+    return root;
+  }
+
+  test('восстанавливает ревью целиком: поля, даты, замечания и скриншоты', async () => {
+    const issues = [makeIssue({ title: 'Кнопка', screenshot: PNG }), makeIssue({ title: 'Без скрина', screenshot: '' }), makeIssue({ title: 'Фото', screenshot: JPEG, updatedAt: 123 })];
+    const original = makeReview({ title: 'Оплата', issues });
+    const root = await savedThenReinstalled([structuredClone(original)]);
+
+    const result = await folder.importFromFolder(root);
+    assert.deepEqual(result, { found: 1, imported: 1, failed: [], missingShots: 0 });
+    const expected = structuredClone(original);
+    delete expected.issues[1].screenshot; // пустой скриншот на диск не пишется — после восстановления поля просто нет
+    assert.deepEqual(await store.getReview(original.id), expected);
+    const [meta] = await store.listReviews();
+    assert.equal(meta.updatedAt, original.updatedAt, 'дата изменения не сдвигается');
+    assert.equal(meta.issueCount, 3);
+    assert.match(meta.search, /оплата/);
+  });
+
+  test('после восстановления текущим становится последнее изменённое ревью; текущее не перебивается', async () => {
+    const old = makeReview({ title: 'Давнее', updatedAt: Date.UTC(2026, 0, 1) });
+    const fresh = makeReview({ title: 'Свежее', updatedAt: Date.UTC(2026, 5, 1) });
+    const root = await savedThenReinstalled([old, fresh]);
+    await folder.importFromFolder(root);
+    assert.equal(await store.getActiveReviewId(), fresh.id);
+
+    ({ chrome } = installEnv());
+    const mine = await store.createReview({ title: 'Уже начатое' });
+    await folder.importFromFolder(root);
+    assert.equal(await store.getActiveReviewId(), mine.id);
+  });
+
+  test('восстанавливает словарь подпапок: следующее сохранение пишет в ту же папку', async () => {
+    const a = makeReview({ title: 'Ревью', createdAt: Date.UTC(2026, 0, 2) });
+    const b = makeReview({ title: 'Ревью', createdAt: Date.UTC(2026, 0, 2) });
+    const root = await savedThenReinstalled([a, b]);
+    await folder.importFromFolder(root);
+    assert.deepEqual(names(), { [a.id]: 'Ревью — 2026-01-02', [b.id]: 'Ревью — 2026-01-02 (2)' });
+    await folder.writeReview(root, await store.getReview(b.id));
+    assert.deepEqual(root.list(), ['Ревью — 2026-01-02', 'Ревью — 2026-01-02 (2)']);
+  });
+
+  test('ревью, которые уже есть в расширении, не перезаписываются', async () => {
+    const root = new MemDir('reviews-results');
+    const review = await store.createReview({ title: 'Живое' });
+    await folder.writeReview(root, review);
+    await store.updateReview(review.id, { title: 'Переименовано' });
+    const result = await folder.importFromFolder(root);
+    assert.equal(result.found, 1);
+    assert.equal(result.imported, 0);
+    assert.equal((await store.getReview(review.id)).title, 'Переименовано');
+  });
+
+  test('копии одной папки — ревью восстанавливается один раз', async () => {
+    const review = makeReview({ title: 'Копия' });
+    const root = await savedThenReinstalled([review]);
+    const [sub] = root.list();
+    root.children.set(`${sub} — копия`, root.at(sub));
+    const result = await folder.importFromFolder(root);
+    assert.equal(result.found, 2);
+    assert.equal(result.imported, 1);
+    assert.equal((await store.listReviews()).length, 1);
+    assert.equal(names()[review.id], sub);
+  });
+
+  test('повреждённый review.json — в failed; чужие папки и файлы игнорируются', async () => {
+    const root = await savedThenReinstalled([makeReview({ title: 'Целое' })]);
+    root.put('Битое — 2026-10-16/review.json', '{ не json');
+    root.put('Чужой формат/review.json', JSON.stringify({ format: 'other', id: 'x', issues: [] }));
+    root.put('Будущее/review.json', JSON.stringify({ format: 'design-review-checker', version: 2, id: 'y', issues: [] }));
+    root.put('Просто папка/notes.txt', 'x');
+    root.put('.DS_Store', 'x');
+    const result = await folder.importFromFolder(root);
+    assert.equal(result.imported, 1);
+    assert.deepEqual(result.failed, ['Битое — 2026-10-16', 'Будущее', 'Чужой формат']);
+    assert.deepEqual((await store.listReviews()).map((r) => r.title), ['Целое']);
+  });
+
+  test('пропавший скриншот: замечание восстанавливается без картинки', async () => {
+    const issue = makeIssue({ title: 'Скрин удалили' });
+    const root = await savedThenReinstalled([makeReview({ issues: [issue] })]);
+    const [sub] = root.list();
+    for (const name of root.list(`${sub}/screenshots`)) await root.at(`${sub}/screenshots`).removeEntry(name);
+    const result = await folder.importFromFolder(root);
+    assert.equal(result.missingShots, 1);
+    const [restored] = (await store.getAllReviews())[0].issues;
+    assert.equal(restored.title, 'Скрин удалили');
+    assert.equal(restored.screenshot, undefined);
+  });
+
+  test('путь к скриншоту не выходит за пределы папки ревью', async () => {
+    const root = new MemDir('reviews-results');
+    root.put('secret.png', 'x');
+    root.put('Ревью/review.json', JSON.stringify({ format: 'design-review-checker', version: 1, id: 'r1', title: 'Ревью', issues: [{ id: 'i1', title: 'A', screenshotFile: '../secret.png' }] }));
+    const result = await folder.importFromFolder(root);
+    assert.equal(result.missingShots, 1);
+    assert.equal((await store.getReview('r1')).issues[0].screenshot, undefined);
+  });
+
+  test('пустая папка — ничего не найдено', async () => {
+    assert.deepEqual(await folder.importFromFolder(new MemDir('reviews-results')), { found: 0, imported: 0, failed: [], missingShots: 0 });
+  });
+
+  test('hasSavedReviews', async () => {
+    const root = new MemDir('x');
+    root.put('a/notes.txt', 'x');
+    assert.equal(await folder.hasSavedReviews(root), false);
+    await folder.writeReview(root, makeReview());
+    assert.equal(await folder.hasSavedReviews(root), true);
+  });
+
+  test('importSummary', () => {
+    assert.equal(folder.importSummary({ imported: 0, failed: [], missingShots: 0 }), '');
+    assert.equal(folder.importSummary({ imported: 2, failed: [], missingShots: 0 }), 'Восстановлено ревью из папки: 2.');
+    assert.equal(
+      folder.importSummary({ imported: 1, failed: ['A', 'B'], missingShots: 3 }),
+      'Восстановлено ревью из папки: 1. Не найдено скриншотов: 3 — эти замечания восстановлены без картинок. Не удалось прочитать review.json в папках: A, B.',
+    );
+  });
+});
+
+describe('несохранённые на диск изменения (доступ есть только пока открыта страница расширения)', () => {
+  test('ревью без записи на диск — несохранённое; после записи — нет; после правки — снова да', async () => {
+    const root = new MemDir('reviews-results');
+    const review = await store.createReview({ title: 'R' });
+    assert.deepEqual((await folder.unsavedReviews()).map((m) => m.id), [review.id]);
+    await folder.writeReview(root, await store.getReview(review.id));
+    assert.deepEqual(await folder.unsavedReviews(), []);
+    await sleepMs(2);
+    await store.updateReview(review.id, { title: 'R2' });
+    assert.deepEqual((await folder.unsavedReviews()).map((m) => m.id), [review.id]);
+  });
+
+  test('syncReview без доступа ничего не пишет — изменение остаётся несохранённым', async () => {
+    const root = await connected('prompt');
+    const review = await store.createReview({ title: 'С сайта' });
+    await folder.syncReview(review);
+    assert.deepEqual(root.list(), []);
+    assert.equal((await folder.unsavedReviews()).length, 1);
+  });
+
+  test('flushUnsaved: с доступом дописывает все несохранённые, без доступа — ничего и без запроса', async () => {
+    const root = await connected('prompt');
+    await store.createReview({ title: 'A' });
+    await store.createReview({ title: 'B' });
+    assert.equal(await folder.flushUnsaved(), 0);
+    assert.equal(root.permission, 'prompt', 'разрешение не запрашивается');
+    root.permission = 'granted';
+    assert.equal(await folder.flushUnsaved(), 2);
+    assert.equal(root.list().length, 2);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+    assert.equal(await folder.flushUnsaved(), 0, 'повторно ничего не пишется');
+  });
+
+  test('flushUnsaved: ошибка записи уходит в статус, исключения нет', async () => {
+    const root = await connected();
+    root.failWrites = 'Нет места';
+    await store.addIssue((await store.createReview({ title: 'X' })).id, makeIssue());
+    assert.equal(await folder.flushUnsaved(), 0);
+    assert.deepEqual({ state: status().state, error: status().error }, { state: 'error', error: 'Нет места' });
+  });
+
+  test('syncReview с доступом заодно дописывает изменения, копившиеся без него', async () => {
+    const root = await connected('prompt');
+    await store.createReview({ title: 'Копилось' });
+    root.permission = 'granted'; // открыли страницу расширения
+    const now = await store.createReview({ title: 'Сейчас' });
+    await folder.syncReview(now);
+    assert.equal(root.list().length, 2);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+  });
+
+  test('восстановленные из папки ревью уже на диске — несохранёнными не считаются', async () => {
+    const root = new MemDir('reviews-results');
+    await folder.writeReview(root, makeReview({ title: 'С диска' }));
+    ({ chrome } = installEnv());
+    await folder.importFromFolder(root);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+  });
+});
+
+describe('версия формата записи', () => {
+  test('ревью, записанные прежним форматом (или старым кодом), считаются несохранёнными', async () => {
+    const root = await connected();
+    const r = await store.createReview({ title: 'Старый формат' });
+    await chrome.storage.local.set({ folderSynced: { [r.id]: Date.now() + 1e6 } }); // так писал прежний код
+    assert.deepEqual((await folder.unsavedReviews()).map((m) => m.id), [r.id]);
+    assert.equal(await folder.flushUnsaved(), 1);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+    assert.equal(chrome.storage.local.data.get('folderSynced')[r.id].v, folder.WRITER_VERSION);
+    assert.ok(root.list().length);
+  });
+});
+
+describe('regainAccessOnClick', () => {
+  function fakeDoc() {
+    const listeners = new Set();
+    return {
+      addEventListener: (type, fn) => type === 'click' && listeners.add(fn),
+      removeEventListener: (type, fn) => listeners.delete(fn),
+      down: (target = { closest: () => null }) => [...listeners].forEach((fn) => fn({ target })),
+      get count() {
+        return listeners.size;
+      },
+    };
+  }
+
+  test('первый клик запрашивает доступ и дописывает несохранённое; слушатель снимается', async () => {
+    const root = await connected('prompt');
+    await store.createReview({ title: 'Ждёт' });
+    const doc = fakeDoc();
+    const done = folder.regainAccessOnClick(doc, root);
+    assert.equal(doc.count, 1);
+    doc.down();
+    assert.deepEqual(await done, { state: 'granted', error: '' });
+    assert.equal(doc.count, 0);
+    assert.equal(root.list().length, 1);
+  });
+
+  test('клик внутри ignore пропускается; отказ браузера — состояние prompt без исключения', async () => {
+    const root = new MemDir('reviews-results', { permission: 'prompt', grantOnRequest: false });
+    await folder.setDir(root);
+    const doc = fakeDoc();
+    const done = folder.regainAccessOnClick(doc, root, { ignore: '#folder' });
+    doc.down({ closest: (sel) => (sel === '#folder' ? {} : null) });
+    assert.equal(doc.count, 1, 'клик по блоку папки не считается');
+    doc.down();
+    assert.deepEqual(await done, { state: 'prompt', error: '' });
+    assert.deepEqual(root.list(), []);
+  });
+});
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+describe('картинки «Визуальные пояснения» на диске', () => {
+  const fix = (src) => ({ id: crypto.randomUUID(), src, name: 'x.png', addedAt: 5 });
+
+  test('пишутся в screenshots/ рядом со скриншотом, в review.json — пути без base64', async () => {
+    const root = new MemDir('reviews-results');
+    const issue = makeIssue({ title: 'Кнопка', fixImages: [fix(PNG_2), fix(JPEG)] });
+    const sub = await folder.writeReview(root, makeReview({ title: 'Оплата', createdAt: Date.UTC(2026, 9, 16, 9), issues: [issue] }));
+    const shots = root.list(`${sub}/screenshots`);
+    assert.equal(shots.length, 3);
+    assert.ok(shots.some((n) => /^01 — Визуальное пояснение — [0-9a-f]{6}\.png$/.test(n)), shots.join());
+    assert.ok(shots.some((n) => /^01 — Визуальное пояснение — [0-9a-f]{6}\.jpg$/.test(n)), shots.join());
+    const json = JSON.parse(root.at(`${sub}/review.json`).text());
+    const saved = json.issues[0].fixImages;
+    assert.equal(saved.length, 2);
+    assert.deepEqual(Object.keys(saved[0]).sort(), ['addedAt', 'file', 'id', 'name']);
+    for (const img of saved) assert.ok(root.has(`${sub}/${img.file}`), img.file);
+    assert.doesNotMatch(root.at(`${sub}/review.json`).text(), /base64/);
+    assert.match(root.at(`${sub}/Отчёт.html`).text(), /class="fix-gallery"/);
+  });
+
+  test('удалённая картинка удаляется и с диска', async () => {
+    const root = new MemDir('reviews-results');
+    const issue = makeIssue({ fixImages: [fix(PNG_2), fix(JPEG)] });
+    const review = makeReview({ issues: [issue] });
+    const sub = await folder.writeReview(root, review);
+    issue.fixImages.shift();
+    await folder.writeReview(root, review);
+    const shots = root.list(`${sub}/screenshots`);
+    assert.equal(shots.filter((n) => n.includes('Визуальное пояснение')).length, 1);
+    assert.ok(shots.some((n) => /Визуальное пояснение — .+\.jpg$/.test(n)));
+  });
+
+  test('удаление одной картинки не переименовывает и не переписывает остальные', async () => {
+    const root = new MemDir('reviews-results');
+    const issue = makeIssue({ fixImages: [fix(PNG_2), fix(JPEG), fix(PNG_2)] });
+    const review = makeReview({ issues: [issue] });
+    const sub = await folder.writeReview(root, review);
+    const files = () => root.list(`${sub}/screenshots`).filter((n) => n.includes('Визуальное пояснение'));
+    const [, keepA, keepB] = issue.fixImages.map((img) => folder.fixFileName(img, 1));
+    const writes = [keepA, keepB].map((n) => root.at(`${sub}/screenshots/${n}`).writes);
+    issue.fixImages.shift();
+    await folder.writeReview(root, review);
+    assert.deepEqual(files(), [keepA, keepB].sort());
+    assert.deepEqual([keepA, keepB].map((n) => root.at(`${sub}/screenshots/${n}`).writes), writes);
+  });
+
+  test('сбой посреди записи не удаляет сохранённые картинки', async () => {
+    const root = new MemDir('reviews-results');
+    const issue = makeIssue({ fixImages: [fix(PNG_2), fix(JPEG), fix(PNG_2)] });
+    const review = makeReview({ issues: [issue] });
+    const sub = await folder.writeReview(root, review);
+    const before = root.list(`${sub}/screenshots`);
+    issue.fixImages.shift();
+    issue.fixImages.push(fix(JPEG)); // новую картинку записать не получится
+    root.at(sub).failWrites = 'Браузер остановил фоновый скрипт';
+    root.at(`${sub}/screenshots`).failWrites = 'Браузер остановил фоновый скрипт';
+    await assert.rejects(folder.writeReview(root, review), /остановил/);
+    assert.deepEqual(root.list(`${sub}/screenshots`), before, 'ничего не удалено, пока не записано новое');
+  });
+
+  test('записи идут строго по очереди, даже если запущены одновременно', async (t) => {
+    const root = new MemDir('reviews-results');
+    const a = makeReview({ title: 'Первое', issues: [makeIssue({ fixImages: [fix(PNG_2), fix(JPEG)] })] });
+    const b = makeReview({ title: 'Второе', issues: [makeIssue({ fixImages: [fix(PNG_2), fix(JPEG)] })] });
+    const calls = [];
+    const original = MemDir.prototype.getFileHandle;
+    t.mock.method(MemDir.prototype, 'getFileHandle', async function (...args) {
+      calls.push(this);
+      await new Promise((r) => setTimeout(r, 1)); // как настоящий диск: каждая операция — отдельная задача
+      return original.apply(this, args);
+    });
+    const [subA, subB] = await Promise.all([folder.writeReview(root, a), folder.writeReview(root, b)]);
+    const owner = (dir) => (dir === root.at(subA) || dir === root.at(`${subA}/screenshots`) ? 'A' : 'B');
+    const order = calls.map(owner).join('');
+    assert.match(order, /^A+B+$/, order);
+  });
+
+  test('восстанавливаются из папки вместе с ревью; пропавший файл считается в missingShots', async () => {
+    const root = new MemDir('reviews-results');
+    const original = makeReview({ issues: [makeIssue({ fixImages: [fix(PNG_2), fix(JPEG)] })] });
+    const sub = await folder.writeReview(root, structuredClone(original));
+    ({ chrome } = installEnv());
+    assert.deepEqual(await folder.importFromFolder(root), { found: 1, imported: 1, failed: [], missingShots: 0 });
+    assert.deepEqual((await store.getReview(original.id)).issues[0].fixImages, original.issues[0].fixImages);
+
+    const [, second] = JSON.parse(root.at(`${sub}/review.json`).text()).issues[0].fixImages;
+    await root.at(`${sub}/screenshots`).removeEntry(second.file.split('/').pop());
+    ({ chrome } = installEnv());
+    const result = await folder.importFromFolder(root);
+    assert.equal(result.missingShots, 1);
+    assert.deepEqual((await store.getReview(original.id)).issues[0].fixImages.map((i) => i.src), [PNG_2]);
+  });
 });

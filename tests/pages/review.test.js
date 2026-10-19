@@ -2,7 +2,8 @@ import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadPage, closePage, connectFolder, sleep } from '../helpers/page.js';
 import { MemDir } from '../helpers/fs.js';
-import { makeIssue } from '../helpers/env.js';
+import { makeIssue, PNG } from '../helpers/env.js';
+import { readFileSync } from 'node:fs';
 import * as store from '../../lib/store.js';
 import * as folder from '../../lib/folder.js';
 
@@ -393,6 +394,34 @@ describe('папка для результатов', () => {
     assert.match(page.$('#folder').textContent, /Сохраняется автоматически/);
   });
 
+  test('выбор папки подтягивает сохранённые в ней ревью и показывает итог', async () => {
+    const page = await seed({ withFolder: false });
+    const saved = new MemDir('reviews-results');
+    await folder.writeReview(saved, { id: 'disk-1', title: 'С диска', createdAt: Date.UTC(2026, 0, 1), updatedAt: Date.UTC(2026, 0, 1), issues: [] });
+    saved.put('Битое/review.json', '{');
+    globalThis.showDirectoryPicker = async () => saved;
+    try {
+      page.$('#folder [data-act=pick]').click();
+      await sleep(200);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.ok(titles(page.$$).includes('С диска'));
+    assert.match(page.$('#folder .folder-state.warn').textContent, /Восстановлено ревью из папки: 1\. Не удалось прочитать review\.json в папках: Битое\./);
+  });
+
+  test('в выбранной папке нет сохранённых ревью — подсказка указать другую', async () => {
+    const page = await seed({ withFolder: false });
+    globalThis.showDirectoryPicker = async () => new MemDir('reviews-results');
+    try {
+      page.$('#folder [data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.match(page.$('#folder').textContent, /нет сохранённых ревью.*«Сменить»/);
+  });
+
   test('отмена системного диалога выбора — без сообщений', async () => {
     const page = await seed({ withFolder: false });
     globalThis.showDirectoryPicker = async () => {
@@ -409,11 +438,46 @@ describe('папка для результатов', () => {
 
   test('нет разрешения — «Разрешить доступ» запрашивает его и сохраняет ревью', async () => {
     const page = await seed({ permission: 'prompt' });
-    assert.match(page.$('#folder').textContent, /заново разрешить запись/);
+    assert.match(page.$('#folder').textContent, /Нет доступа к папке\. Кликните в любом месте страницы/);
     page.$('#folder [data-act=grant]').click();
     await sleep(100);
     assert.equal(page.root.permission, 'granted');
     assert.equal(page.root.list().length, 3);
+  });
+
+  test('нет разрешения — первый клик в любом месте страницы молча возвращает доступ и дописывает несохранённое', async () => {
+    const page = await seed({ permission: 'prompt' });
+    await sleep(30);
+    assert.deepEqual(page.root.list(), [], 'до клика ничего не пишется и не запрашивается');
+    assert.equal(page.root.permission, 'prompt');
+    page.$('#main').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await sleep(120);
+    assert.equal(page.root.permission, 'granted');
+    assert.equal(page.root.list().length, 3);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+    assert.match(page.$('#folder').textContent, /Сохраняется автоматически/);
+  });
+
+  test('браузер не дал доступ по клику — блок папки показывает его ответ', async () => {
+    const page = await seed({ permission: 'prompt' });
+    page.root.grantOnRequest = false;
+    await sleep(30);
+    page.$('#main').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await sleep(80);
+    assert.match(page.$('#folder .folder-state.err').textContent, /Браузер не дал доступ по клику \(ответ: prompt\)/);
+  });
+
+  test('клик по блоку папки не запускает фоновый запрос доступа (там свои кнопки)', async () => {
+    const page = await seed({ permission: 'prompt' });
+    await sleep(30);
+    page.$('#folder').dispatchEvent(new page.window.MouseEvent('click', { bubbles: true }));
+    await sleep(60);
+    assert.equal(page.root.permission, 'prompt');
+  });
+
+  test('с доступом блок папки просит не закрывать страницу', async () => {
+    const page = await seed();
+    assert.match(page.$('#folder').textContent, /Не закрывайте эту страницу: пока она открыта, ревью сохраняются в папку/);
   });
 
   test('«Сохранить сейчас» пишет все ревью', async () => {
@@ -441,5 +505,241 @@ describe('папка для результатов', () => {
     await folder.setStatus({ state: 'error', error: 'Нет места' });
     await sleep(40);
     assert.match(page.$('#folder .folder-state.err').textContent, /Ошибка записи: Нет места/);
+  });
+});
+
+describe('«Визуальные пояснения»', () => {
+  async function alphaPage() {
+    const page = await seed();
+    await openReview(page, page.alpha);
+    return page;
+  }
+  const block = (page, issue) => page.$(`[data-issue="${issue.id}"] [data-fix]`);
+  const pngFile = (page, name = 'fix.png') => new page.window.File([Buffer.from(PNG.split(',')[1], 'base64')], name, { type: 'image/png' });
+  const fixesOf = async (page, issue) => (await store.getReview(page.alpha.id)).issues.find((i) => i.id === issue.id).fixImages || [];
+  const withData = (page, type, prop, data, target) => {
+    const e = new page.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(e, prop, { value: data });
+    target.dispatchEvent(e);
+    return e;
+  };
+
+  test('без картинок — приглашение добавить', async () => {
+    const page = await alphaPage();
+    const b = block(page, page.a1);
+    assert.ok(b.querySelector('.fix-empty[data-act=fix-add]'));
+    assert.equal(page.$(`[data-issue="${page.a1.id}"] .shot-wrap .field-label`).textContent, 'Скриншот области с сайта');
+    assert.equal(b.querySelector('[data-lb-group]'), null);
+    assert.equal(b.querySelector('.fix-count'), null);
+  });
+
+  test('выбор файлов: картинки сохраняются и показываются, остальные файлы игнорируются', async () => {
+    const page = await alphaPage();
+    const input = block(page, page.a1).querySelector('[data-fix-input]');
+    assert.equal(input.multiple, true);
+    const text = new page.window.File(['x'], 'notes.txt', { type: 'text/plain' });
+    Object.defineProperty(input, 'files', { value: [pngFile(page, 'a.png'), text, pngFile(page, 'b.png')], configurable: true });
+    input.dispatchEvent(new page.window.Event('change'));
+    await sleep(80);
+    const saved = await fixesOf(page, page.a1);
+    assert.deepEqual(saved.map((i) => [i.name, i.src]), [['a.png', PNG], ['b.png', PNG]]);
+    const b = block(page, page.a1);
+    assert.equal(b.querySelector('.fix-count').textContent, '2');
+    assert.equal(b.querySelectorAll('[data-lb-group] .fix-thumb img').length, 2);
+    assert.ok(b.querySelector('.fix-tile-add'));
+    assert.equal((await fixesOf(page, page.a2)).length, 0, 'другое замечание не задето');
+  });
+
+  test('перетаскивание файлов в блок', async () => {
+    const page = await alphaPage();
+    const b = block(page, page.a2);
+    const dt = { types: ['Files'], files: [pngFile(page)], dropEffect: 'none' };
+    withData(page, 'dragenter', 'dataTransfer', dt, b);
+    assert.ok(b.classList.contains('drop'));
+    const e = withData(page, 'drop', 'dataTransfer', dt, b);
+    assert.equal(e.defaultPrevented, true);
+    await sleep(80);
+    assert.equal((await fixesOf(page, page.a2)).length, 1);
+  });
+
+  test('файл, брошенный мимо блока, не открывается вместо страницы', async () => {
+    const page = await alphaPage();
+    const e = withData(page, 'drop', 'dataTransfer', { types: ['Files'], files: [] }, page.$('.summary'));
+    assert.equal(e.defaultPrevented, true);
+  });
+
+  test('вставка из буфера — в замечание, где стоит фокус; текст не перехватывается', async () => {
+    const page = await alphaPage();
+    page.$(`[data-issue="${page.a2.id}"] [data-field=title]`).focus();
+    const textPaste = withData(page, 'paste', 'clipboardData', { files: [] }, page.document.activeElement);
+    assert.equal(textPaste.defaultPrevented, false);
+    const e = withData(page, 'paste', 'clipboardData', { files: [pngFile(page)] }, page.document.activeElement);
+    assert.equal(e.defaultPrevented, true, 'отменяется сразу — иначе картинка попала бы в редактор описания');
+    await sleep(80);
+    assert.equal((await fixesOf(page, page.a2)).length, 1);
+    assert.equal((await fixesOf(page, page.a1)).length, 0);
+  });
+
+  test('удаление картинки — только после подтверждения', async () => {
+    const page = await alphaPage();
+    await store.addFixImages(page.alpha.id, page.a1.id, [{ src: PNG, name: '1' }, { src: PNG, name: '2' }]);
+    await sleep(1100); // запись не со страницы → перерисовка
+    block(page, page.a1).querySelector('[data-act=fix-del]').click();
+    await sleep(20);
+    assert.match(page.$('#danger .danger-q').textContent, /Удалить картинку/);
+    page.$('#danger button[value=cancel]').click();
+    await sleep(30);
+    assert.equal((await fixesOf(page, page.a1)).length, 2);
+    block(page, page.a1).querySelector('[data-act=fix-del]').click();
+    await sleep(20);
+    page.$('#danger button[value=ok]').click();
+    await sleep(40);
+    assert.deepEqual((await fixesOf(page, page.a1)).map((i) => i.name), ['2']);
+    assert.equal(block(page, page.a1).querySelectorAll('.fix-thumb').length, 1);
+  });
+
+  test('клик по картинке открывает слайдшоу по картинкам этого замечания', async () => {
+    const page = await alphaPage();
+    await store.addFixImages(page.alpha.id, page.a1.id, [{ src: PNG }, { src: PNG }, { src: PNG }]);
+    await store.addFixImages(page.alpha.id, page.a2.id, [{ src: PNG }]);
+    await sleep(1100);
+    block(page, page.a1).querySelectorAll('.fix-thumb img')[1].click();
+    const lb = page.$('.lb');
+    assert.equal(lb.hidden, false);
+    assert.equal(lb.querySelector('.lb-count').textContent, '2 / 3');
+    assert.equal(lb.querySelector('.lb-cap').textContent, '#1 · Визуальные пояснения · 2 из 3');
+    page.key(page.document, 'ArrowRight');
+    assert.equal(lb.querySelector('.lb-count').textContent, '3 / 3');
+    page.key(page.document, 'Escape');
+    assert.equal(lb.hidden, true);
+  });
+
+  test('высота блока фиксирована — картинки прокручиваются внутри', () => {
+    const css = readFileSync(new URL('../../pages/review.css', import.meta.url), 'utf8');
+    assert.match(css, /\.fix-body \{[^}]*height: 236px;[^}]*overflow-y: auto/);
+  });
+});
+
+describe('редактор описания (Markdown)', () => {
+  async function alphaPage() {
+    const page = await seed();
+    await openReview(page, page.alpha);
+    return page;
+  }
+  const ed = (page, issue) => page.$(`[data-issue="${issue.id}"] [data-md]`);
+
+  test('описание показывается отформатированным; исходный Markdown — в режиме разметки', async () => {
+    let rid, issue;
+    const page = await loadPage('pages/review', {
+      setup: async () => {
+        rid = (await store.createReview({ title: 'R' })).id;
+        issue = (await store.addIssue(rid, makeIssue({ description: '**Важно**\n\n- отступ 16px\n- [x] цвет' }))).issue;
+      },
+    });
+    const e = ed(page, issue);
+    assert.equal(e.dataset.mode, 'visual');
+    assert.equal(e.querySelector('.md-visual strong').textContent, 'Важно');
+    assert.equal(e.querySelectorAll('.md-visual li').length, 2);
+    assert.equal(e.querySelector('.md-visual li.todo').dataset.checked, 'true');
+    assert.equal(e.querySelector('.md-source').value, '**Важно**\n\n- отступ 16px\n- [x] цвет');
+    assert.equal(e.querySelector('.md-source').hidden, true);
+  });
+
+  test('переключение «Markdown» — для всех карточек и запоминается', async () => {
+    const page = await alphaPage();
+    ed(page, page.a1).querySelector('[data-cmd=mode]').click();
+    for (const issue of [page.a1, page.a2]) {
+      assert.equal(ed(page, issue).dataset.mode, 'source');
+      assert.equal(ed(page, issue).querySelector('.md-source').hidden, false);
+      assert.equal(ed(page, issue).querySelector('.md-visual').hidden, true);
+    }
+    assert.equal(page.window.localStorage.getItem('drc-md-mode'), 'source');
+    ed(page, page.a1).querySelector('[data-cmd=mode]').click();
+    assert.equal(ed(page, page.a2).dataset.mode, 'visual');
+  });
+
+  test('правка в визуальном режиме сохраняется как Markdown', async () => {
+    const page = await alphaPage();
+    const visual = ed(page, page.a1).querySelector('.md-visual');
+    visual.innerHTML = '<p>Нужен <b>отступ</b> 16px</p><ul><li>слева</li><li>справа</li></ul>';
+    visual.dispatchEvent(new page.window.InputEvent('input', { bubbles: true }));
+    await sleep(500);
+    assert.equal((await store.getReview(page.alpha.id)).issues[0].description, 'Нужен **отступ** 16px\n\n- слева\n- справа');
+    assert.equal(ed(page, page.a1).querySelector('.md-source').value, 'Нужен **отступ** 16px\n\n- слева\n- справа');
+  });
+
+  test('кнопки панели в режиме Markdown оборачивают выделение разметкой', async () => {
+    const page = await alphaPage();
+    const e = ed(page, page.a1);
+    e.querySelector('[data-cmd=mode]').click();
+    const ta = e.querySelector('.md-source');
+    page.input(ta, 'сделать жирным');
+    ta.setSelectionRange(8, 14);
+    e.querySelector('[data-cmd=bold]').click();
+    assert.equal(ta.value, 'сделать **жирным**');
+    ta.setSelectionRange(0, 0);
+    e.querySelector('[data-cmd=ul]').click();
+    assert.equal(ta.value, '- сделать **жирным**');
+    await sleep(500);
+    assert.equal((await store.getReview(page.alpha.id)).issues[0].description, '- сделать **жирным**');
+  });
+
+  test('HTML в описании не исполняется', async () => {
+    let issue;
+    const page = await loadPage('pages/review', {
+      setup: async () => {
+        const rid = (await store.createReview({ title: 'R' })).id;
+        issue = (await store.addIssue(rid, makeIssue({ description: '<img src=x onerror=alert(1)> [x](javascript:alert(1))' }))).issue;
+      },
+    });
+    const visual = ed(page, issue).querySelector('.md-visual');
+    assert.equal(visual.querySelectorAll('img, a').length, 0);
+    assert.match(visual.textContent, /<img src=x onerror=alert\(1\)>/);
+  });
+
+  test('номер замечания — ярлык в левом верхнем углу карточки', async () => {
+    const page = await alphaPage();
+    const num = page.$(`[data-issue="${page.a2.id}"] > .issue-num`);
+    assert.equal(num.textContent, '#2');
+    const css = readFileSync(new URL('../../pages/review.css', import.meta.url), 'utf8');
+    assert.match(css, /\.issue-num \{[^}]*position: absolute; top: -15px; left: 22px;/);
+  });
+});
+
+describe('фоновый скрипт на старом коде', () => {
+  async function pageWith(t, reply) {
+    t.mock.method(globalThis, 'fetch', async () => new Response('код'));
+    return loadPage('pages/review', {
+      setup: async (env) => {
+        await store.createReview({ title: 'R' });
+        env.chrome.runtime.sendMessage = t.mock.fn(async () => reply);
+        env.chrome.runtime.reload = t.mock.fn();
+      },
+    });
+  }
+
+  test('старый фоновый скрипт (не знает drc:codeVersion) → предупреждение с перезагрузкой', async (t) => {
+    const page = await pageWith(t, { ok: false, error: 'Неизвестное сообщение: drc:codeVersion' });
+    await sleep(30);
+    const bar = page.$('.stale-bg');
+    assert.ok(bar, 'есть предупреждение');
+    assert.match(bar.textContent, /не перезагружено/);
+    await page.chrome.storage.local.set({ folderSynced: { x: { at: 1, v: 2 } } });
+    bar.querySelector('[data-act=reload-ext]').click();
+    await sleep(20);
+    assert.equal(page.chrome.runtime.reload.mock.callCount(), 1);
+    assert.equal(page.chrome.storage.local.data.get('reopenAfterReload'), page.window.location.href);
+    assert.equal(page.chrome.storage.local.data.has('folderSynced'), false, 'всё перезапишется новым кодом');
+  });
+
+  test('другой отпечаток кода → предупреждение; тот же → нет', async (t) => {
+    let page = await pageWith(t, { ok: true, fingerprint: '0000000000000000' });
+    await sleep(30);
+    assert.ok(page.$('.stale-bg'));
+    const { codeFingerprint } = await import('../../lib/code-version.js');
+    const same = await codeFingerprint();
+    page = await pageWith(t, { ok: true, fingerprint: same });
+    await sleep(30);
+    assert.equal(page.$('.stale-bg'), null);
   });
 });

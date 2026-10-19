@@ -11,7 +11,7 @@ const ROOT = new URL('../../', import.meta.url);
 let loads = 0;
 let current = null;
 
-const GLOBALS = ['window', 'document', 'location', 'history', 'navigator', 'Event', 'KeyboardEvent', 'MouseEvent', 'HTMLElement', 'Node', 'getComputedStyle'];
+const GLOBALS = ['window', 'document', 'location', 'history', 'navigator', 'Event', 'KeyboardEvent', 'MouseEvent', 'HTMLElement', 'Node', 'getComputedStyle', 'FileReader'];
 
 function setGlobal(name, value) {
   Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });

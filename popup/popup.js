@@ -39,7 +39,7 @@ async function shortcut() {
 }
 
 async function render() {
-  const [active, reviews] = await Promise.all([store.getActiveReview(), store.listReviews()]);
+  const [active, reviews] = await Promise.all([store.activeOrLatestReview(), store.listReviews()]);
   btnAll.hidden = !reviews.length || view === 'list';
 
   if (view === 'list') return renderList(reviews, active);
@@ -47,7 +47,9 @@ async function render() {
   return renderActive(active);
 }
 
-function renderCreate(reviews) {
+async function renderCreate(reviews) {
+  // Папка не подключена — например, расширение переустановили: ревью можно вернуть из сохранённых файлов.
+  const canRestore = !(await folder.getDir());
   app.innerHTML = `
     <form id="create">
       <h2>Новое ревью</h2>
@@ -69,7 +71,16 @@ function renderCreate(reviews) {
         <button type="submit" class="btn btn-primary">Создать ревью</button>
         ${reviews.length ? '<button type="button" class="btn btn-light" data-act="back">Отмена</button>' : ''}
       </div>
-    </form>`;
+    </form>
+    ${
+      canRestore
+        ? `<section class="restore">
+            <b>Уже делали ревью раньше?</b>
+            <span>Прошлые ревью хранятся на диске: по умолчанию в папке <code>reviews-results</code> внутри папки расширения или в той папке, которую вы выбрали сами. Чтобы восстановить их, укажите эту папку повторно — ревью вернутся в список вместе со скриншотами.</span>
+            <button type="button" class="btn btn-light" data-act="restore">${icon('folderOpen', 14)} Восстановить ревью из папки</button>
+          </section>`
+        : ''
+    }`;
   const form = app.querySelector('#create');
   chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
     const host = hostOf(tab?.url);
@@ -98,6 +109,8 @@ function renderCreate(reviews) {
     view = 'auto';
     render();
   });
+  // Системный диалог выбора папки из popup не открыть (popup закрывается) — восстанавливаем на странице настройки.
+  app.querySelector('[data-act=restore]')?.addEventListener('click', () => openPage('pages/setup.html?restore=1'));
 }
 
 function renderList(reviews, active) {
@@ -172,7 +185,7 @@ async function renderActive(review) {
           </section>`
         : `<section class="setup">
             <b>Перед первым ревью подключите папку результатов</b>
-            <span>Отчёты, данные и скриншоты сохраняются в <code>reviews-results</code> в папке расширения. Браузер попросит один раз указать её.</span>
+            <span>Отчёты, данные и скриншоты сохраняются в <code>reviews-results</code> в папке расширения. Браузер попросит один раз указать её. Ревью, сохранённые там раньше, подтянутся.</span>
             <button class="btn btn-primary btn-big" data-act="setup">${icon('folder', 18)} Подключить reviews-results</button>
           </section>`
     }
@@ -205,8 +218,12 @@ async function renderActive(review) {
         <button class="btn btn-outline" data-act="export" ${issues.length ? '' : 'disabled'}>Экспортировать</button>
       </div>
       <button class="folder-line" data-act="folder"></button>
+      <div class="keep-open" hidden>Чтобы ревью сохранялись в папку, держите <button class="link" data-act="keep-open">страницу ревью</button> открытой — иначе браузер забирает разрешение на запись.</div>
     </section>`;
-  renderFolderLine(app.querySelector('[data-act=folder]'));
+  renderFolderLine(app.querySelector('[data-act=folder]'), review.id);
+  // Разрешение на запись в папку живёт, только пока открыта страница расширения — предупреждаем, если папка подключена.
+  app.querySelector('.keep-open').hidden = !hasFolder;
+  app.querySelector('[data-act=keep-open]').addEventListener('click', () => openPage(`pages/review.html?id=${review.id}`));
 
   // Пользовательский текст вставляем через textContent.
   app.querySelector('.review-card .title').textContent = review.title;
@@ -245,22 +262,34 @@ function ticketLinks(review) {
     .join('')}</div>`;
 }
 
-async function renderFolderLine(el) {
+async function renderFolderLine(el, reviewId) {
   const dir = await folder.getDir();
   const { [folder.KEY_FOLDER_STATUS]: status = {} } = await chrome.storage.local.get(folder.KEY_FOLDER_STATUS);
   const perm = dir ? await folder.permission(dir).catch(() => 'prompt') : null;
+  // Писать в папку браузер даёт, только пока открыта страница расширения (popup не в счёт): закрыли страницу ревью —
+  // доступа нет, и новые замечания в папку не попадут, пока его не запросят снова.
+  const unsaved = dir ? (await folder.unsavedReviews()).length : 0;
   if (!dir) {
-    el.innerHTML = `${icon('folder', 14)} Сохранять на диск: <u>подключить reviews-results</u>`;
-  } else if (perm !== 'granted') {
-    el.innerHTML = `${icon('folder', 14)} Нет доступа к «${escapeHtml(dir.name)}»: <u>разрешить</u>`;
+    el.innerHTML = `${icon('folder', 14)}<span>Сохранять на диск: <u>подключить reviews-results</u></span>`;
+  } else if (status.state === 'error' && perm === 'granted') {
+    el.innerHTML = `${icon('warning', 14)}<span>Ошибка записи в «${escapeHtml(dir.name)}»: <u>подробнее</u></span>`;
     el.classList.add('warn');
-  } else if (status.state === 'error') {
-    el.innerHTML = `${icon('warning', 14)} Ошибка записи в «${escapeHtml(dir.name)}»: <u>подробнее</u>`;
+  } else if (perm !== 'granted') {
+    el.innerHTML = `${icon('folder', 14)}<span>Нужно разрешение на запись в «${escapeHtml(dir.name)}»${unsaved ? ` (не сохранено: ${unsaved} ревью)` : ''}: <u>запросить</u></span>`;
+    el.classList.add('warn');
+  } else if (unsaved) {
+    el.innerHTML = `${icon('folder', 14)}<span>Не сохранено в «${escapeHtml(dir.name)}»: ${unsaved} ревью — <u>сохранить</u></span>`;
     el.classList.add('warn');
   } else {
-    el.innerHTML = `${icon('folder', 14)} Сохраняется в «${escapeHtml(folder.folderLabel(dir, status))}»${status.lastSyncAt ? ` · ${new Date(status.lastSyncAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : ''}`;
+    el.innerHTML = `${icon('folder', 14)}<span>Сохраняется в «${escapeHtml(folder.folderLabel(dir, status))}»${status.lastSyncAt ? ` · ${new Date(status.lastSyncAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>`;
   }
-  el.addEventListener('click', () => openPage('pages/review.html#folder'));
+  el.addEventListener('click', async () => {
+    // Без доступа — страница ревью: там по клику браузер вернёт доступ (из popup запрос не появляется),
+    // и её же нужно держать открытой, чтобы ревью продолжали сохраняться.
+    if (dir && perm !== 'granted') return openPage(`pages/review.html?id=${reviewId}`);
+    if (unsaved && (await folder.flushUnsaved())) return render();
+    openPage('pages/review.html#folder');
+  });
 }
 
 // Страница горячих клавиш расширений. В Яндекс Браузере она называется browser://, chrome:// тоже понимает.
