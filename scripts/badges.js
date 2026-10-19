@@ -16,7 +16,7 @@ export const SUITES = [
   { label: 'Folder tests', files: ['tests/unit/folder.test.js'] },
   { label: 'Background tests', files: ['tests/unit/background.test.js'] },
   { label: 'Content script tests', files: ['tests/unit/content.test.js'] },
-  { label: 'Utils tests', files: ['tests/unit/constants.test.js', 'tests/unit/url.test.js'] },
+  { label: 'Utils tests', files: ['tests/unit/constants.test.js', 'tests/unit/url.test.js', 'tests/unit/markdown.test.js'] },
   { label: 'Popup tests', files: ['tests/pages/popup.test.js'] },
   { label: 'Pages tests', files: ['tests/pages/review.test.js', 'tests/pages/report-setup.test.js'] },
   { label: 'Release tests', files: ['tests/unit/changelog.test.js'] },

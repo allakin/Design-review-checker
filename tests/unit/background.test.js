@@ -2,6 +2,8 @@ import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { installEnv, makeIssue } from '../helpers/env.js';
 import { MemDir } from '../helpers/fs.js';
+import { readFileSync } from 'node:fs';
+import { codeFingerprint, REOPEN_KEY } from '../../lib/code-version.js';
 import * as store from '../../lib/store.js';
 import * as folder from '../../lib/folder.js';
 
@@ -270,5 +272,48 @@ describe('автосохранение в папку', () => {
     await store.deleteReview(review.id);
     await sleep(1100);
     assert.deepEqual(root.list(), []);
+  });
+});
+
+describe('версия кода фонового скрипта', () => {
+  // fetch файлов расширения → чтение с диска.
+  const ROOT = new URL('../../', import.meta.url);
+  function mockFetch(t) {
+    t.mock.method(globalThis, 'fetch', async (url) => {
+      const path = String(url).replace(/^chrome-extension:\/\/[^/]+\//, '');
+      return new Response(readFileSync(new URL(path, ROOT)));
+    });
+  }
+
+  test('drc:codeVersion отдаёт отпечаток кода, с которым запущен фоновый скрипт', async (t) => {
+    mockFetch(t);
+    const { send } = await loadBackground();
+    const res = await send({ type: 'drc:codeVersion' });
+    assert.equal(res.ok, true);
+    assert.match(res.fingerprint, /^[0-9a-f]{16}$/);
+    assert.equal(res.fingerprint, await codeFingerprint());
+  });
+
+  test('файлы не прочитать → отпечатка нет (null), без ошибки', async () => {
+    const { send } = await loadBackground();
+    assert.deepEqual(await send({ type: 'drc:codeVersion' }), { ok: true, fingerprint: null });
+  });
+
+  test('после «Перезагрузить расширение» снова открывает страницу ревью', async () => {
+    const env = installEnv({ tabs: [{ url: 'https://example.com' }] });
+    const url = env.chrome.runtime.getURL('pages/review.html?id=r1');
+    await env.chrome.storage.local.set({ [REOPEN_KEY]: url });
+    await import(`../../background.js?instance=${++loads}`);
+    await sleep(20);
+    assert.equal(env.chrome.tabs.create.mock.calls[0].arguments[0].url, url);
+    assert.equal(env.chrome.storage.local.data.has(REOPEN_KEY), false);
+  });
+
+  test('чужой адрес после перезагрузки не открывается', async () => {
+    const env = installEnv({ tabs: [{ url: 'https://example.com' }] });
+    await env.chrome.storage.local.set({ [REOPEN_KEY]: 'https://evil.example/' });
+    await import(`../../background.js?instance=${++loads}`);
+    await sleep(20);
+    assert.equal(env.chrome.tabs.create.mock.callCount(), 0);
   });
 });

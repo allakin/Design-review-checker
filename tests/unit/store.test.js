@@ -368,3 +368,32 @@ describe('onReviewsChanged', () => {
 test('uid генерирует UUID v4', () => {
   assert.match(store.uid(), /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 });
+
+describe('картинки «Визуальные пояснения»', () => {
+  test('addFixImages дописывает картинки с id и датой, сохраняя порядок', async () => {
+    const r = await store.createReview({ title: 'A' });
+    const { issue } = await store.addIssue(r.id, { title: 'x' });
+    await store.addFixImages(r.id, issue.id, [{ src: 'data:image/png;base64,AA==', name: 'a.png' }]);
+    const u = await store.addFixImages(r.id, issue.id, [{ src: 'data:image/png;base64,BB==' }, { src: 'data:image/png;base64,CC==' }]);
+    assert.deepEqual(u.fixImages.map((i) => i.src.slice(-4)), ['AA==', 'BB==', 'CC==']);
+    assert.equal(u.fixImages[0].name, 'a.png');
+    assert.equal(u.fixImages[1].name, '');
+    assert.equal(new Set(u.fixImages.map((i) => i.id)).size, 3);
+    assert.equal(typeof u.fixImages[0].addedAt, 'number');
+    assert.deepEqual((await store.getReview(r.id)).issues[0].fixImages, u.fixImages);
+  });
+
+  test('deleteFixImage удаляет только указанную картинку', async () => {
+    const r = await store.createReview({ title: 'A' });
+    const { issue } = await store.addIssue(r.id, { title: 'x' });
+    const { fixImages } = await store.addFixImages(r.id, issue.id, [{ src: 'data:image/png;base64,AA==' }, { src: 'data:image/png;base64,BB==' }]);
+    await store.deleteFixImage(r.id, issue.id, fixImages[0].id);
+    assert.deepEqual((await store.getReview(r.id)).issues[0].fixImages.map((i) => i.id), [fixImages[1].id]);
+    await store.deleteFixImage(r.id, 'nope', 'nope'); // без ошибок
+  });
+
+  test('addFixImages: ошибка для неизвестного замечания', async () => {
+    const r = await store.createReview({ title: 'A' });
+    await assert.rejects(store.addFixImages(r.id, 'nope', [{ src: 'x' }]), /Замечание не найдено/);
+  });
+});

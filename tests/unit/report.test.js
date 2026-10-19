@@ -13,6 +13,8 @@ import {
   installLightbox,
   REPORT_CSS,
   SPECS_CSS,
+  LIGHTBOX_CSS,
+  fixImagesOf,
 } from '../../lib/report.js';
 import { SEVERITIES } from '../../lib/constants.js';
 import { ICONS } from '../../lib/icons.js';
@@ -193,7 +195,7 @@ describe('buildReportBody', () => {
     const doc = bodyDoc(makeReview({ issues: [issue] }));
     const card = doc.getElementById('issue-1');
     assert.equal(card.querySelector('h3').textContent, issue.title);
-    assert.equal(card.querySelector('.desc').textContent, 'Строка 1\nСтрока 2');
+    assert.equal(card.querySelector('.desc').innerHTML, '<p>Строка 1<br>Строка 2</p>');
     const links = [...card.querySelectorAll('.props a')];
     assert.deepEqual(links.map((a) => a.getAttribute('href')), [issue.mockupUrl, issue.page.url]);
     links.forEach((a) => assert.equal(a.getAttribute('rel'), 'noopener'));
@@ -419,5 +421,97 @@ describe('installLightbox (просмотр скриншотов)', () => {
   test('работает без иконок (ic = undefined)', () => {
     const dom = new JSDOM(`<!doctype html><body>${buildReportBody(makeReview({ issues: [makeIssue()] }))}</body>`);
     assert.doesNotThrow(() => installLightbox(dom.window.document));
+  });
+});
+
+describe('«Визуальные пояснения» в отчёте', () => {
+  const fix = (src, id = crypto.randomUUID()) => ({ id, src, name: '', addedAt: 1 });
+
+  test('fixImagesOf: только data:image/png|jpeg, без пустых записей', () => {
+    const issue = makeIssue({ fixImages: [fix(PNG), fix('javascript:alert(1)'), null, fix(JPEG), fix('https://x/y.png')] });
+    assert.deepEqual(fixImagesOf(issue).map((i) => i.src), [PNG, JPEG]);
+    assert.deepEqual(fixImagesOf(makeIssue()), []);
+    assert.deepEqual(fixImagesOf(makeIssue({ fixImages: 'x' })), []);
+  });
+
+  test('блок с лентой картинок, счётчиком и подписями для слайдшоу', () => {
+    const doc = bodyDoc(makeReview({ issues: [makeIssue({ title: 'Кнопка', fixImages: [fix(PNG), fix(JPEG)] }), makeIssue()] }));
+    const [first, second] = doc.querySelectorAll('article.issue');
+    assert.ok(first.classList.contains('has-fix'));
+    assert.equal(first.querySelector('.fix .i-label span').textContent, '2');
+    const imgs = [...first.querySelectorAll('.fix-gallery[data-lb-group] img')];
+    assert.deepEqual(imgs.map((i) => i.getAttribute('src')), [PNG, JPEG]);
+    assert.equal(imgs[1].dataset.caption, '#1 · Визуальные пояснения · 2 из 2');
+    assert.equal(second.querySelector('.fix'), null, 'без картинок блока нет');
+    assert.ok(!second.classList.contains('has-fix'));
+  });
+
+  test('на экране лента фиксированной высоты, в PDF — все картинки без прокрутки', () => {
+    assert.match(REPORT_CSS, /\.fix-gallery \{[^}]*height: 168px;[^}]*overflow-x: auto/);
+    const print = REPORT_CSS.slice(REPORT_CSS.indexOf('@media print'));
+    assert.match(print, /\.fix-gallery \{[^}]*height: auto;[^}]*overflow: visible/);
+    assert.match(print, /\.issue\.has-fix \{ break-inside: auto/);
+    assert.ok(REPORT_CSS.includes(LIGHTBOX_CSS));
+  });
+
+  test('XSS: src и подписи экранированы', () => {
+    const doc = bodyDoc(makeReview({ issues: [makeIssue({ fixImages: [fix(`${PNG}" onerror="alert(1)`)] })] }));
+    assert.equal(doc.querySelectorAll('[onerror]').length, 0);
+  });
+
+  test('слайдшоу листает картинки только своего замечания; скриншоты — отдельно', () => {
+    const review = makeReview({
+      issues: [makeIssue({ fixImages: [fix(PNG), fix(JPEG), fix(PNG)] }), makeIssue({ fixImages: [fix(JPEG)] })],
+    });
+    const dom = new JSDOM(`<!doctype html><body>${buildReportBody(review)}</body>`, { pretendToBeVisual: true });
+    const doc = dom.window.document;
+    installLightbox(doc, lightboxIcons());
+    const click = (el) => el.dispatchEvent(new dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
+    const key = (k) => doc.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+    const box = doc.querySelector('.lb');
+    const count = () => box.querySelector('.lb-count').textContent;
+
+    click(doc.querySelectorAll('.fix-gallery')[0].querySelectorAll('img')[1]);
+    assert.equal(box.hidden, false);
+    assert.equal(count(), '2 / 3');
+    assert.equal(box.querySelector('.lb-cap').textContent, '#1 · Визуальные пояснения · 2 из 3');
+    key('ArrowRight');
+    key('ArrowRight');
+    assert.equal(count(), '1 / 3', 'по кругу внутри группы');
+    key('Escape');
+
+    click(doc.querySelectorAll('.fix-gallery')[1].querySelector('img'));
+    assert.equal(count(), '', 'одна картинка — без счётчика');
+    assert.ok(box.querySelector('.lb-nav').hidden);
+    key('Escape');
+
+    click(doc.querySelectorAll('.report .shot img')[1]);
+    assert.equal(count(), '2 / 2', 'скриншоты листаются без картинок «Визуальные пояснения»');
+  });
+});
+
+describe('описание в Markdown', () => {
+  test('форматируется в отчёте: заголовки, списки, чек-лист, код, ссылки', () => {
+    const md = '### Что не так\n\n**Отступ** _слева_ ~~12px~~ `16px`\n\n- раз\n  - вложенный\n1. первый\n\n- [x] готово\n\n> цитата\n\n[Макет](https://figma.com/x)';
+    const card = bodyDoc(makeReview({ issues: [makeIssue({ description: md })] })).querySelector('article.issue');
+    const desc = card.querySelector('.desc.md');
+    assert.deepEqual([...card.querySelectorAll('.i-block > .i-label')].map((l) => l.textContent), ['Скриншот области с сайта', 'Описание']);
+    assert.equal(desc.previousElementSibling.textContent, 'Описание');
+    assert.equal(desc.querySelector('h3').textContent, 'Что не так');
+    assert.equal(desc.querySelector('strong').textContent, 'Отступ');
+    assert.equal(desc.querySelector('em').textContent, 'слева');
+    assert.equal(desc.querySelector('del').textContent, '12px');
+    assert.equal(desc.querySelector('code').textContent, '16px');
+    assert.equal(desc.querySelector('ul > li > ul > li').textContent, 'вложенный');
+    assert.equal(desc.querySelector('ol > li').textContent, 'первый');
+    assert.equal(desc.querySelector('ul.todos li.todo').dataset.checked, 'true');
+    assert.equal(desc.querySelector('blockquote').textContent, 'цитата');
+    assert.equal(desc.querySelector('a').href, 'https://figma.com/x');
+    assert.equal(desc.querySelector('a').target, '_blank');
+  });
+
+  test('стили описания есть и на экране, и в печати', () => {
+    assert.match(REPORT_CSS, /\.md li\.todo::before/);
+    assert.match(REPORT_CSS, /\.md pre \{[^}]*white-space: pre-wrap/);
   });
 });

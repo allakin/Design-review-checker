@@ -132,7 +132,8 @@ describe('скрипты и страницы', () => {
 
   test('страницы расширения не грузят ничего из сети (CSP MV3)', () => {
     for (const f of htmlFiles) assert.doesNotMatch(read(f), /(src|href)="https?:/, f);
-    for (const f of jsFiles) assert.doesNotMatch(read(f), /\bfetch\(|XMLHttpRequest|import\(['"]https?:/, f);
+    // fetch разрешён только для собственных файлов расширения (chrome.runtime.getURL) — это не сеть.
+    for (const f of jsFiles) assert.doesNotMatch(read(f), /\bfetch\((?!chrome\.runtime\.getURL\()|XMLHttpRequest|import\(['"]https?:/, f);
   });
 
   test('нет inline-скриптов (запрещены CSP расширений)', () => {
