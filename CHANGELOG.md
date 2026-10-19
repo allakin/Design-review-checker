@@ -3,10 +3,11 @@
 Все заметные изменения расширения. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/).
 Разделы собирает `npm run changelog-prepend` из сообщений коммитов; после сборки их можно поправить руками.
 
-## [1.0.0] — 2026-10-18
+## [1.0.0] — 2026-10-19
 
 ### Новое
 
+- Добавлен блок для визуальных пояснений Добавлена поддержка WYSIWYG и Markdown ([fa5ecb9](https://github.com/allakin/Design-review-checker/commit/fa5ecb917c81f66c06d3dbf8380522f669dc4183))
 - Добавлена функциональность восстановления прошлых ревью при обновлении/отключении расширения ([ba0b938](https://github.com/allakin/Design-review-checker/commit/ba0b938fbf647aac213f85ed469beb8882b13970))
 
 ### Изменения
