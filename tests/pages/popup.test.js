@@ -272,6 +272,89 @@ describe('popup: текущее ревью', () => {
   });
 });
 
+describe('popup: сверка с папкой при открытии', () => {
+  // Ревью сохранено в папку, затем папку очистили вручную.
+  const clearedFolder = (extra = async () => {}) =>
+    withReview({
+      issues: [makeIssue()],
+      setup: async () => {
+        await folder.flushUnsaved();
+        (await folder.getDir()).children.clear();
+        await extra();
+      },
+    });
+
+  test('папку очистили — вместо ревью экран «Папка пуста» со списком пропавших', async () => {
+    const { $, $$ } = await clearedFolder();
+    assert.equal($('.review-card'), null);
+    assert.equal($('.missing-title').textContent, 'Папка «reviews-results» пуста');
+    assert.deepEqual($$('.missing li .t div').map((d) => d.textContent), ['Оплата']);
+    assert.match($('.missing li small').textContent, /^1 зам\./);
+  });
+
+  test('«Удалить из расширения» — ревью удаляется, показывается форма нового ревью', async () => {
+    const { $ } = await clearedFolder();
+    $('[data-act=forget]').click();
+    await sleep(40);
+    assert.deepEqual(await store.listReviews(), []);
+    assert.ok($('form#create'));
+    assert.equal($('.restore'), null, 'папка подключена — восстанавливать нечего');
+  });
+
+  test('«Сохранить в папку заново» — ревью записывается и показывается как обычно', async () => {
+    const { $ } = await clearedFolder();
+    $('[data-act=resave]').click();
+    await sleep(40);
+    assert.equal((await folder.getDir()).list().length, 1);
+    assert.equal($('.review-card .title').textContent, 'Оплата');
+    assert.match($('.folder-line').textContent, /Сохраняется в «reviews-results»/);
+  });
+
+  test('пропала часть ревью — в заголовке их число, остальные не трогаются', async () => {
+    const { $, $$ } = await withReview({
+      setup: async () => {
+        await sleep(2);
+        await store.createReview({ title: 'Осталось' });
+        await folder.flushUnsaved();
+        const dir = await folder.getDir();
+        const oplata = (await store.listReviews()).find((m) => m.title === 'Оплата');
+        await dir.removeEntry(await folder.reviewFolderName(oplata), { recursive: true });
+      },
+    });
+    assert.equal($('.missing-title').textContent, 'В папке «reviews-results» нет 1 ревью');
+    assert.deepEqual($$('.missing li .t div').map((d) => d.textContent), ['Оплата']);
+    $('[data-act=forget]').click();
+    await sleep(40);
+    assert.deepEqual((await store.listReviews()).map((m) => m.title), ['Осталось']);
+    assert.equal($('.review-card .title').textContent, 'Осталось');
+  });
+
+  test('«Ревью лежат в другой папке?» открывает блок папки на странице ревью', async () => {
+    const { $, chrome } = await clearedFolder();
+    $('[data-act=other-folder]').click();
+    assert.equal(chrome.tabs.create.mock.calls.at(-1).arguments[0].url, chrome.runtime.getURL('pages/review.html#folder'));
+  });
+
+  test('папку удалили целиком — вместо «Сохранить заново» предлагается выбрать папку', async () => {
+    const { $ } = await clearedFolder(async () => {
+      (await folder.getDir()).entries = async function* () {
+        throw Object.assign(new Error('нет каталога'), { name: 'NotFoundError' });
+      };
+    });
+    assert.equal($('.missing-title').textContent, 'Папки «reviews-results» больше нет');
+    assert.equal($('[data-act=resave]'), null);
+    assert.ok($('[data-act=other-folder]'));
+  });
+
+  test('без доступа к папке проверить нельзя — ревью показывается как раньше', async () => {
+    const { $ } = await clearedFolder(async () => {
+      (await folder.getDir()).permission = 'prompt';
+    });
+    assert.equal($('.missing'), null);
+    assert.equal($('.review-card .title').textContent, 'Оплата');
+  });
+});
+
 describe('popup: все ревью', () => {
   test('список ревью и переключение текущего', async () => {
     let first;

@@ -10,6 +10,8 @@ const errorEl = document.getElementById('error');
 const btnAll = document.getElementById('btn-all');
 
 let view = 'auto'; // auto | list | create
+// Сверка с папкой при открытии: ревью, файлы которых пропали из папки (удалили или перенесли вручную).
+let folderCheck = { missing: [] };
 
 function showError(message) {
   errorEl.textContent = message;
@@ -43,6 +45,9 @@ async function render() {
   btnAll.hidden = !reviews.length || view === 'list';
 
   if (view === 'list') return renderList(reviews, active);
+  const ids = new Set(reviews.map((r) => r.id));
+  const missing = folderCheck.missing.filter((m) => ids.has(m.id));
+  if (view === 'auto' && missing.length) return renderMissing({ ...folderCheck, missing });
   if (view === 'create' || !active) return renderCreate(reviews);
   return renderActive(active);
 }
@@ -111,6 +116,50 @@ async function renderCreate(reviews) {
   });
   // Системный диалог выбора папки из popup не открыть (popup закрывается) — восстанавливаем на странице настройки.
   app.querySelector('[data-act=restore]')?.addEventListener('click', () => openPage('pages/setup.html?restore=1'));
+}
+
+// Папку очистили, удалили или перенесли из неё ревью, а в расширении они остались. Без этого экрана popup
+// показывал бы ревью как сохранённые. Решает пользователь: убрать их из расширения или записать заново.
+function renderMissing({ missing, found, folderGone, dirName }) {
+  const n = missing.length;
+  const title = folderGone
+    ? `Папки «${dirName}» больше нет`
+    : found
+      ? `В папке «${dirName}» нет ${n} ревью`
+      : `Папка «${dirName}» пуста`;
+  app.innerHTML = `
+    <section class="missing">
+      <b class="missing-title">${icon('warning', 16)}<span></span></b>
+      <span>${n === 1 ? 'Это ревью сохранялось' : 'Эти ревью сохранялись'} в папку раньше, но ${folderGone ? 'папку удалили или переместили' : 'файлы удалили или переместили'}. В расширении ${n === 1 ? 'оно осталось' : 'они остались'}:</span>
+      <ul class="review-list">
+        ${missing.map((r) => `<li><div class="t"><div></div><small>${r.issueCount} зам. · ${formatDate(r.updatedAt)}</small></div></li>`).join('')}
+      </ul>
+      <button class="btn btn-danger btn-big" data-act="forget">${icon('trash', 16)} Удалить из расширения</button>
+      ${
+        folderGone
+          ? `<button class="btn btn-light btn-big" data-act="other-folder">${icon('folderOpen', 16)} Выбрать папку заново</button>`
+          : `<button class="btn btn-light btn-big" data-act="resave">${icon('save', 16)} Сохранить в папку заново</button>
+             <button class="link" data-act="other-folder">Ревью лежат в другой папке? Укажите её</button>`
+      }
+      <span class="missing-note">Удаление необратимо: замечания, скриншоты и описания пропадут. Если ревью ещё нужны — сохраните их заново.</span>
+    </section>`;
+  // Пользовательский текст вставляем через textContent.
+  app.querySelector('.missing-title span').textContent = title;
+  app.querySelectorAll('.missing li').forEach((li, k) => (li.querySelector('.t div').textContent = missing[k].title));
+  const ids = missing.map((m) => m.id);
+  app.querySelector('[data-act=forget]').addEventListener('click', async () => {
+    await folder.forgetMissing(ids);
+    folderCheck = { missing: [] };
+    view = 'auto';
+    render();
+  });
+  app.querySelector('[data-act=resave]')?.addEventListener('click', async () => {
+    await folder.resaveMissing(ids);
+    folderCheck = { missing: [] };
+    render();
+  });
+  // Сменить папку можно только на странице расширения: из popup системный диалог выбора не открыть.
+  app.querySelector('[data-act=other-folder]').addEventListener('click', () => openPage('pages/review.html#folder'));
 }
 
 function renderList(reviews, active) {
@@ -319,4 +368,8 @@ btnAll.addEventListener('click', () => {
 });
 
 store.onReviewsChanged(() => view === 'auto' && render());
-render();
+// Сначала сверяемся с папкой, чтобы не показать на мгновение ревью, которых на диске уже нет.
+folder
+  .checkFolderContents()
+  .then((check) => (folderCheck = check), () => {})
+  .finally(render);

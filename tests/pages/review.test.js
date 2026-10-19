@@ -375,6 +375,61 @@ describe('удаление ревью', () => {
   });
 });
 
+describe('сверка с папкой при открытии', () => {
+  // Все ревью сохранены в папку, затем папку очистили вручную.
+  async function cleared() {
+    const ctx = {};
+    const page = await loadPage('pages/review', {
+      setup: async () => {
+        ctx.root = await connectFolder(MemDir);
+        ctx.alpha = await store.createReview({ title: 'Альфа' });
+        await sleep(3);
+        ctx.beta = await store.createReview({ title: 'Бета' });
+        await folder.flushUnsaved();
+        ctx.root.children.clear();
+      },
+    });
+    return { ...page, ...ctx };
+  }
+
+  test('папку очистили — окно со списком пропавших ревью', async () => {
+    const page = await cleared();
+    assert.equal(page.$('#danger').open, true);
+    assert.equal(page.$('.danger-q').textContent, 'Папка «reviews-results» пуста');
+    assert.deepEqual(page.$$('.danger-alert li').map((li) => li.textContent).sort(), ['Альфа — 0 зам.', 'Бета — 0 зам.']);
+  });
+
+  test('«Удалить из расширения» — ревью удаляются, страница показывает пустое состояние', async () => {
+    const page = await cleared();
+    page.$('#danger button[value=ok]').click();
+    await sleep(60);
+    assert.deepEqual(await store.listReviews(), []);
+    assert.match(page.$('#main .empty').textContent, /Ревью не выбрано/);
+    assert.match(page.$('#review-list').textContent, /Ревью пока нет/);
+  });
+
+  test('«Сохранить заново» — ревью снова в папке', async () => {
+    const page = await cleared();
+    page.$('#danger [data-act=extra]').click();
+    await sleep(80);
+    assert.equal(page.root.list().length, 2);
+    assert.equal((await store.listReviews()).length, 2);
+  });
+
+  test('«Решить позже» — ничего не меняется', async () => {
+    const page = await cleared();
+    page.$('#danger button[value=cancel]').click();
+    await sleep(40);
+    assert.equal((await store.listReviews()).length, 2);
+    assert.deepEqual(page.root.list(), []);
+  });
+
+  test('папка на месте — окно не появляется', async () => {
+    const page = await seed();
+    assert.equal(page.$('#danger').open, false);
+  });
+});
+
 describe('папка для результатов', () => {
   test('не подключена — предупреждение и кнопка выбора; выбор сохраняет все ревью', async () => {
     const page = await seed({ withFolder: false });
