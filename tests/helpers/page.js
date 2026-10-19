@@ -42,14 +42,45 @@ function polyfillDialog(window) {
 
 // Длинные таймеры страниц (например, revokeObjectURL через 60 с после скачивания) не должны
 // держать процесс тестов: в браузере вкладка просто живёт дальше.
+// Короткие таймеры (фейковая IndexedDB отвечает через setTimeout(0)) запоминаем, чтобы sleep дожидался их цепочек.
+const SHORT_TIMER_MS = 10;
 const nativeSetTimeout = globalThis.setTimeout;
+const nativeClearTimeout = globalThis.clearTimeout;
+const pendingShort = new Set();
 globalThis.setTimeout = function (fn, ms, ...args) {
-  const t = nativeSetTimeout(fn, ms, ...args);
-  if (ms >= 10_000) t.unref?.();
+  if (typeof fn !== 'function' || ms > SHORT_TIMER_MS) {
+    const t = nativeSetTimeout(fn, ms, ...args);
+    if (ms >= 10_000) t.unref?.();
+    return t;
+  }
+  const t = nativeSetTimeout(() => {
+    pendingShort.delete(t);
+    fn(...args);
+  }, ms);
+  pendingShort.add(t);
   return t;
 };
+globalThis.clearTimeout = function (t) {
+  pendingShort.delete(t);
+  return nativeClearTimeout(t);
+};
 
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Ждёт, пока страница доделает начатое: в очереди не останется коротких таймеров несколько оборотов цикла событий подряд.
+// Без этого под нагрузкой (наборы тестов идут параллельно) фиксированной паузы не хватает и проверки видят недорисованную страницу.
+export async function settle({ timeout = 5000 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (let idle = 0; idle < 3; ) {
+    await new Promise((r) => setImmediate(r));
+    idle = pendingShort.size ? 0 : idle + 1;
+    if (Date.now() > deadline) throw new Error(`Страница не завершила асинхронную работу за ${timeout} мс`);
+  }
+}
+
+// Пауза в ms (для таймеров страниц: debounce, задержки) и затем — завершение начатой асинхронной работы.
+export const sleep = async (ms) => {
+  await new Promise((r) => nativeSetTimeout(r, ms));
+  await settle();
+};
 
 /**
  * @param {string} page   'popup/popup' | 'pages/review' | 'pages/report' | 'pages/setup'
