@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   HEADER,
   LOG_FORMAT,
@@ -15,6 +16,10 @@ import {
   prependSection,
   syncDraft,
   publishRelease,
+  touchesExtension,
+  nextVersion,
+  withVersion,
+  withLockVersion,
 } from '../../scripts/changelog-prepend.js';
 
 const HASH = '0123456789abcdef0123456789abcdef01234567';
@@ -241,6 +246,18 @@ describe('GitHub Releases', () => {
     assert.ok(published.calls.every((c) => c.method === 'GET'));
   });
 
+  test('syncDraft с replaces переименовывает прежний черновик, а не создаёт второй', async () => {
+    const gh = fakeGitHub([{ id: 9, tag_name: 'v1.0.1', draft: true }]);
+    assert.equal((await syncDraft(REPO, { ...opts(gh), replaces: 'v1.0.1' })).action, 'updated');
+    const patch = gh.calls.at(-1);
+    assert.equal(patch.url, 'https://api.github.com/repos/o/r/releases/9');
+    assert.equal(patch.body.tag_name, 'v1.1.0');
+    assert.equal(patch.body.name, 'v1.1.0');
+
+    const released = fakeGitHub([{ id: 9, tag_name: 'v1.0.1', draft: false }]);
+    assert.equal((await syncDraft(REPO, { ...opts(released), replaces: 'v1.0.1' })).action, 'created', 'опубликованный релиз не переименовывается');
+  });
+
   test('publishRelease публикует черновик как есть, тег — на merge-коммит', async () => {
     const gh = fakeGitHub([{ id: 7, tag_name: 'v1.1.0', draft: true, body: 'текст, поправленный руками' }]);
     const res = await publishRelease(REPO, { ...opts(gh), target: 'abc123' });
@@ -263,5 +280,62 @@ describe('GitHub Releases', () => {
 
   test('без GITHUB_TOKEN — понятная ошибка', async () => {
     await assert.rejects(syncDraft(REPO, { ...opts(fakeGitHub([])), token: '' }), /GITHUB_TOKEN/);
+  });
+});
+
+describe('нужен ли новый релиз', () => {
+  test('релиз нужен только при правках файлов расширения', () => {
+    assert.equal(touchesExtension(['README.md', 'tests/pages/popup.test.js', '.github/workflows/tests.yml', 'scripts/badges.js']), false);
+    assert.equal(touchesExtension([]), false);
+    assert.equal(touchesExtension(['README.md', 'popup/popup.js']), true);
+    assert.equal(touchesExtension(['manifest.json']), true);
+    assert.equal(touchesExtension(['icons/icon16.png']), true);
+    assert.equal(touchesExtension(['libs/x.js', 'manifest.json.bak']), false, 'только точные пути и папки');
+  });
+});
+
+describe('автоматическое поднятие версии', () => {
+  const item = (group) => ({ group, text: 'x', hash: HASH, date: '2026-10-19' });
+
+  test('уровень по пунктам релиза: ломающие → major, новое → minor, остальное → patch', () => {
+    assert.equal(nextVersion('1.4.2', [item('Изменения'), item('Тесты')]), '1.4.3');
+    assert.equal(nextVersion('1.4.2', [item('Исправления'), item('Новое')]), '1.5.0');
+    assert.equal(nextVersion('1.4.2', [item('Новое'), item('Ломающие изменения')]), '2.0.0');
+    assert.equal(nextVersion('1.0.0', []), '1.0.1');
+  });
+
+  test('manifest.json и package.json: меняется только верхнеуровневая version, форматирование сохраняется', () => {
+    const manifest = '{\n  "manifest_version": 3,\n  "name": "X",\n  "version": "1.0.0",\n  "description": "version 1.0.0"\n}\n';
+    assert.equal(withVersion(manifest, '1.1.0'), manifest.replace('"version": "1.0.0"', '"version": "1.1.0"'));
+    assert.match(withVersion(manifest, '1.1.0'), /"description": "version 1\.0\.0"/);
+  });
+
+  test('package-lock.json: версия проекта в корне и в packages[""], зависимости не трогаются', () => {
+    const lock = `${JSON.stringify({ name: 'x', version: '1.0.0', lockfileVersion: 3, packages: { '': { name: 'x', version: '1.0.0' }, 'node_modules/a': { version: '1.0.0' } } }, null, 2)}\n`;
+    const out = JSON.parse(withLockVersion(lock, '1.0.1'));
+    assert.equal(out.version, '1.0.1');
+    assert.equal(out.packages[''].version, '1.0.1');
+    assert.equal(out.packages['node_modules/a'].version, '1.0.0');
+    assert.ok(withLockVersion(lock, '1.0.1').endsWith('}\n'));
+  });
+
+  test('настоящие файлы проекта поднимаются без потерь', () => {
+    for (const [file, update] of [['manifest.json', withVersion], ['package.json', withVersion], ['package-lock.json', withLockVersion]]) {
+      const text = readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
+      const { version } = JSON.parse(text);
+      const out = update(text, '9.9.9');
+      assert.equal(JSON.parse(out).version, '9.9.9', file);
+      assert.equal(update(out, version), text, `${file}: обратная замена возвращает исходный текст`);
+    }
+  });
+});
+
+describe('раздел CHANGELOG при повышении версии', () => {
+  test('prependSection с replaces убирает раздел прежней версии', () => {
+    const before = prependSection(prependSection('', '1.0.0', '## [1.0.0] — 2026-10-01\n\n- старое'), '1.0.1', '## [1.0.1] — 2026-10-19\n\n- патч');
+    const after = prependSection(before, '1.1.0', '## [1.1.0] — 2026-10-20\n\n- новое', '1.0.1');
+    assert.ok(after.startsWith(HEADER.trimEnd()));
+    assert.ok(!after.includes('## [1.0.1]'));
+    assert.ok(after.indexOf('## [1.1.0]') < after.indexOf('## [1.0.0]'));
   });
 });

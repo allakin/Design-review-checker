@@ -9,6 +9,7 @@ import { JSDOM } from 'jsdom';
 import { ICONS } from '../../lib/icons.js';
 import { SEVERITIES } from '../../lib/constants.js';
 import { SUITES, badgesMarkdown, endpointBadge, replaceBlock, repoSlug } from '../../scripts/badges.js';
+import { touchesExtension } from '../../scripts/changelog-prepend.js';
 
 const ROOT = new URL('../../', import.meta.url);
 const path = (p) => new URL(p, ROOT);
@@ -38,8 +39,11 @@ describe('manifest.json', () => {
     assert.ok(manifest.description.length <= 132, `${manifest.description.length} символов`);
   });
 
-  test('версия в manifest.json и package.json совпадает', () => {
+  test('версия в manifest.json, package.json и package-lock.json совпадает', () => {
     assert.equal(JSON.parse(read('package.json')).version, manifest.version);
+    const lock = JSON.parse(read('package-lock.json'));
+    assert.equal(lock.version, manifest.version, 'package-lock.json');
+    assert.equal(lock.packages[''].version, manifest.version, 'package-lock.json → packages[""]');
   });
 
   test('все файлы, на которые ссылается манифест, существуют', () => {
@@ -50,6 +54,11 @@ describe('manifest.json', () => {
       ...Object.values(manifest.action.default_icon),
     ];
     for (const f of files) assert.ok(exists(f), f);
+  });
+
+  test('правки всех файлов, которые грузит манифест, требуют нового релиза (EXTENSION_PATHS)', () => {
+    const files = ['manifest.json', manifest.background.service_worker, manifest.action.default_popup, 'content/content.js', ...Object.values(manifest.icons)];
+    for (const f of files) assert.ok(touchesExtension([f]), `${f} не входит в EXTENSION_PATHS в scripts/changelog-prepend.js`);
   });
 
   test('иконки — PNG нужных размеров', () => {
