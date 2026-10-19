@@ -1,26 +1,34 @@
-// Прогоняет наборы тестов и обновляет плашки в README.md между
-// <!-- badges:start --> и <!-- badges:end -->. Плашка «passing» появляется только после реального прогона.
-// Версия на плашке «release» — последний опубликованный релиз из списка релизов на GitHub;
-// если релизов нет или GitHub недоступен — версия из manifest.json.
-// Запуск: npm run badges (в CI можно передать GITHUB_TOKEN, чтобы не упереться в лимит запросов API)
+// Прогоняет наборы тестов и пишет блок плашек в README.md между <!-- badges:start --> и <!-- badges:end -->.
+// Плашки живые: README хранит только адреса, а состояние shields.io берёт при каждом показе.
+//  - All tests — статус последнего прогона .github/workflows/tests.yml в основной ветке;
+//  - release — последний опубликованный релиз на GitHub (semver, без черновиков и пре-релизов);
+//  - наборы — JSON из ветки badges, который после каждого push в основную ветку публикует CI (npm run badges -- --out <папка>).
+// Все плашки тестов ведут на страницу workflow tests.yml.
+// Запуск: npm run badges [-- --out <папка для JSON>]
 import { spawn, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const README = `${ROOT}README.md`;
 
+const WORKFLOW = 'tests.yml';
+const BADGES_BRANCH = 'badges';
+const DEFAULT_BRANCH = 'main';
+
+// id — имя JSON-файла плашки в ветке badges.
 export const SUITES = [
-  { label: 'Store tests', files: ['tests/unit/store.test.js'] },
-  { label: 'Report tests', files: ['tests/unit/report.test.js'] },
-  { label: 'Folder tests', files: ['tests/unit/folder.test.js'] },
-  { label: 'Background tests', files: ['tests/unit/background.test.js'] },
-  { label: 'Content script tests', files: ['tests/unit/content.test.js'] },
-  { label: 'Utils tests', files: ['tests/unit/constants.test.js', 'tests/unit/url.test.js', 'tests/unit/markdown.test.js'] },
-  { label: 'Popup tests', files: ['tests/pages/popup.test.js'] },
-  { label: 'Pages tests', files: ['tests/pages/review.test.js', 'tests/pages/report-setup.test.js'] },
-  { label: 'Release tests', files: ['tests/unit/changelog.test.js'] },
-  { label: 'Integrity tests', files: ['tests/integrity/project.test.js'] },
+  { id: 'store', label: 'Store tests', files: ['tests/unit/store.test.js'] },
+  { id: 'report', label: 'Report tests', files: ['tests/unit/report.test.js'] },
+  { id: 'folder', label: 'Folder tests', files: ['tests/unit/folder.test.js'] },
+  { id: 'background', label: 'Background tests', files: ['tests/unit/background.test.js'] },
+  { id: 'content', label: 'Content script tests', files: ['tests/unit/content.test.js'] },
+  { id: 'utils', label: 'Utils tests', files: ['tests/unit/constants.test.js', 'tests/unit/url.test.js', 'tests/unit/markdown.test.js'] },
+  { id: 'popup', label: 'Popup tests', files: ['tests/pages/popup.test.js'] },
+  { id: 'pages', label: 'Pages tests', files: ['tests/pages/review.test.js', 'tests/pages/report-setup.test.js'] },
+  { id: 'release', label: 'Release tests', files: ['tests/unit/changelog.test.js'] },
+  { id: 'integrity', label: 'Integrity tests', files: ['tests/integrity/project.test.js'] },
 ];
 
 function run(files) {
@@ -35,13 +43,6 @@ function run(files) {
     });
   });
 }
-
-// shields.io: «-» → «--», «_» → «__», пробелы → %20.
-const enc = (s) => encodeURIComponent(String(s).replace(/-/g, '--').replace(/_/g, '__'));
-const badge = (alt, label, message, color, logo, link = '') => {
-  const img = `![${alt}](https://img.shields.io/badge/${enc(label)}-${enc(message)}-${color}?logo=${logo}&logoColor=white)`;
-  return link ? `[${img}](${link})` : img;
-};
 
 // «owner/repo» из GITHUB_REPOSITORY (CI) или из адреса origin: https://github.com/o/r.git, git@github.com:o/r.git.
 export function repoSlug(remote = process.env.GITHUB_REPOSITORY) {
@@ -69,18 +70,6 @@ export function compareVersions(a, b) {
   return a.pre.localeCompare(b.pre, 'en', { numeric: true });
 }
 
-// Самый старший релиз из ответа GET /repos/{owner}/{repo}/releases.
-// Черновики, пре-релизы и теги не в формате semver пропускаются. Нет подходящих — null.
-export function pickLatestRelease(releases) {
-  let best = null;
-  for (const r of releases ?? []) {
-    if (r.draft || r.prerelease) continue;
-    const v = parseVersion(r.tag_name);
-    if (v && (!best || compareVersions(v, best) > 0)) best = { ...v, url: r.html_url };
-  }
-  return best && { version: best.version, url: best.url };
-}
-
 export async function fetchReleases(repo, { token = process.env.GITHUB_TOKEN, fetchImpl = fetch } = {}) {
   const headers = { Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -98,33 +87,32 @@ export async function fetchReleases(repo, { token = process.env.GITHUB_TOKEN, fe
   return releases;
 }
 
-// Версия для плашки: последний релиз с GitHub, иначе — manifest.json.
-export async function resolveRelease(fallbackVersion, { repo = repoSlug(), ...opts } = {}) {
-  if (!repo) return { version: fallbackVersion, url: '', source: 'manifest.json (не удалось определить репозиторий GitHub)' };
-  try {
-    const latest = pickLatestRelease(await fetchReleases(repo, opts));
-    if (latest) return { ...latest, source: `GitHub Releases (${repo})` };
-    return { version: fallbackVersion, url: `https://github.com/${repo}/releases`, source: `manifest.json (в ${repo} нет опубликованных релизов)` };
-  } catch (e) {
-    return { version: fallbackVersion, url: `https://github.com/${repo}/releases`, source: `manifest.json (${e.message})` };
-  }
+const passed = (r) => r.code === 0 && r.fail === 0 && r.tests > 0;
+
+// Ответ для https://img.shields.io/endpoint: https://shields.io/badges/endpoint-badge
+export function endpointBadge(label, r) {
+  const ok = passed(r);
+  return {
+    schemaVersion: 1,
+    label,
+    message: ok ? 'passing' : `failing ${r.pass}/${r.tests - r.todo}`,
+    color: ok ? '4c1' : 'e05d44',
+    namedLogo: 'github',
+    logoColor: 'white',
+    cacheSeconds: 300,
+  };
 }
 
-export function badgesMarkdown(version, results, releaseUrl = '') {
-  const ok = (r) => r.code === 0 && r.fail === 0 && r.tests > 0;
-  const total = results.reduce((n, r) => n + r.tests, 0);
-  const allOk = results.every(ok);
-  const lines = [
-    badge('Browser extension', 'Browser', 'extension', 'e05d44', 'googlechrome', '#установка'),
-    badge('Manifest V3', 'Manifest', 'V3', '4285f4', 'googlechrome'),
-    badge('Release', 'release', `v${version}`, '2ea44f', 'github', releaseUrl),
-    badge(`All tests: ${total}`, 'All tests', allOk ? 'passing' : 'failing', allOk ? '4c1' : 'e05d44', 'github', '#тесты'),
-    ...SUITES.map((s, i) => {
-      const r = results[i];
-      return badge(`${s.label}: ${r.pass}/${r.tests - r.todo}`, s.label, ok(r) ? 'passing' : 'failing', ok(r) ? '4c1' : 'e05d44', 'github', '#тесты');
-    }),
-  ];
-  return lines.join('\n');
+export function badgesMarkdown(repo, branch = DEFAULT_BRANCH) {
+  const workflow = `https://github.com/${repo}/actions/workflows/${WORKFLOW}?query=${encodeURIComponent(`branch:${branch}`)}`;
+  const endpoint = (id) => `https://img.shields.io/endpoint?url=${encodeURIComponent(`https://raw.githubusercontent.com/${repo}/${BADGES_BRANCH}/${id}.json`)}`;
+  return [
+    '[![Browser extension](https://img.shields.io/badge/Browser-extension-e05d44?logo=googlechrome&logoColor=white)](#установка)',
+    '![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285f4?logo=googlechrome&logoColor=white)',
+    `[![Release](https://img.shields.io/github/v/release/${repo}?sort=semver&label=release&color=2ea44f&logo=github&logoColor=white)](https://github.com/${repo}/releases)`,
+    `[![All tests](https://img.shields.io/github/actions/workflow/status/${repo}/${WORKFLOW}?branch=${branch}&label=All%20tests&logo=github&logoColor=white)](${workflow})`,
+    ...SUITES.map((s) => `[![${s.label}](${endpoint(s.id)})](${workflow})`),
+  ].join('\n');
 }
 
 export function replaceBlock(readme, block) {
@@ -137,14 +125,23 @@ export function replaceBlock(readme, block) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { version: manifestVersion } = JSON.parse(readFileSync(`${ROOT}manifest.json`, 'utf8'));
-  const [release, results] = await Promise.all([resolveRelease(manifestVersion), Promise.all(SUITES.map((s) => run(s.files)))]);
-  console.log(`Релиз на плашке: v${release.version} — ${release.source}`);
+  const outArg = process.argv.indexOf('--out');
+  const outDir = outArg > 0 ? process.argv[outArg + 1] : null;
+  const repo = repoSlug();
+  if (!repo) throw new Error('Не удалось определить репозиторий GitHub: задайте GITHUB_REPOSITORY или origin на github.com');
+
+  const results = await Promise.all(SUITES.map((s) => run(s.files)));
   SUITES.forEach((s, i) => {
     const r = results[i];
-    console.log(`${r.fail || r.code ? '✖' : '✔'} ${s.label.padEnd(22)} ${r.pass}/${r.tests - r.todo}${r.todo ? ` (todo: ${r.todo})` : ''}`);
+    console.log(`${passed(r) ? '✔' : '✖'} ${s.label.padEnd(22)} ${r.pass}/${r.tests - r.todo}${r.todo ? ` (todo: ${r.todo})` : ''}`);
   });
-  writeFileSync(README, replaceBlock(readFileSync(README, 'utf8'), badgesMarkdown(release.version, results, release.url)));
-  console.log('Плашки в README.md обновлены.');
-  if (results.some((r) => r.fail || r.code)) process.exit(1);
+
+  writeFileSync(README, replaceBlock(readFileSync(README, 'utf8'), badgesMarkdown(repo)));
+  console.log(`Блок плашек в README.md сверен (${repo}).`);
+  if (outDir) {
+    mkdirSync(outDir, { recursive: true });
+    SUITES.forEach((s, i) => writeFileSync(join(outDir, `${s.id}.json`), `${JSON.stringify(endpointBadge(s.label, results[i]), null, 2)}\n`));
+    console.log(`JSON плашек записан в ${outDir}.`);
+  }
+  if (!results.every(passed)) process.exit(1);
 }

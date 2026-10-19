@@ -62,7 +62,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -78,9 +77,3 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: node scripts/changelog-prepend.js --publish
-
-      # Релиз, опубликованный через GITHUB_TOKEN, не запускает событие release — плашки пересобираем явно.
-      - name: Update README badges
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run tests.yml --ref "${{ github.event.repository.default_branch }}"

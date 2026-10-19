@@ -2,11 +2,10 @@ name: Tests
 
 on:
   push:
+    # В ветке badges только JSON плашек, его публикует job badges ниже.
+    branches-ignore: [badges]
   pull_request:
   workflow_dispatch:
-  # Плашка release показывает последний опубликованный релиз — пересобираем её, когда список релизов меняется.
-  release:
-    types: [published, edited, unpublished, deleted]
 
 permissions:
   contents: read
@@ -28,58 +27,50 @@ jobs:
       - run: npm ci
       - run: npm test
 
-  # Плашки в README (<!-- badges:start --> … <!-- badges:end -->) обновляются только в основной ветке:
-  # в pull request'ах и других ветках коммит бота дал бы конфликты в README при слиянии.
-  # Событие release приходит с тегом в github.ref_name, поэтому и checkout, и push идут в основную ветку явно.
+  # Плашки наборов в README живые: shields.io читает JSON из ветки badges (scripts/badges.js).
+  # Публикуем их только из основной ветки — плашки показывают её состояние. Ветка badges каждый раз
+  # перезаписывается одним коммитом: история не растёт, конфликтов нет, README бот больше не трогает.
+  # Плашка All tests — статус этого workflow в основной ветке, её GitHub отдаёт сам.
   badges:
-    name: Update README badges
-    if: >-
-      github.event_name == 'release' ||
-      (github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch)
+    name: Publish test badges
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     permissions:
       contents: write
     concurrency:
-      group: readme-badges
-      cancel-in-progress: false
-    env:
-      BRANCH: ${{ github.event.repository.default_branch }}
+      group: test-badges
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.repository.default_branch }}
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
       - run: npm ci
 
-      # badges.js пишет README и при упавших тестах (плашка станет «failing»), но выходит с кодом 1.
-      # Запоминаем код, чтобы сначала закоммитить плашки, а потом уронить job.
-      - name: Run test suites and regenerate badges
+      # badges.js пишет JSON и при упавших тестах (плашка станет «failing»), но выходит с кодом 1.
+      # Запоминаем код, чтобы сначала опубликовать плашки, а потом уронить job.
+      - name: Run test suites and build badge JSON
         id: badges
-        env:
-          GITHUB_TOKEN: ${{ github.token }} # версия релиза для плашки берётся из GitHub API
         run: |
           set +e
-          npm run badges
+          npm run badges -- --out "$RUNNER_TEMP/badges"
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Commit README if badges changed
+      - name: Publish badge JSON to the badges branch
+        working-directory: ${{ runner.temp }}/badges
+        env:
+          TOKEN: ${{ github.token }}
         run: |
-          if git diff --quiet -- README.md; then
-            echo "Плашки не изменились."
-            exit 0
-          fi
+          git init -q -b badges
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add README.md
-          git commit -m "Обновить плашки в README [skip ci]"
-          git pull --rebase origin "$BRANCH"
-          git push origin "HEAD:$BRANCH"
+          git add -A
+          git commit -q -m "Плашки тестов для ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:badges
 
       - name: Fail if tests failed
         if: steps.badges.outputs.exit_code != '0'
         run: |
-          echo "::error::Тесты упали — плашки в README помечены как failing."
+          echo "::error::Тесты упали — плашки наборов помечены как failing."
           exit 1

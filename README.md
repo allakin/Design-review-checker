@@ -3,19 +3,19 @@
 <!-- badges:start -->
 [![Browser extension](https://img.shields.io/badge/Browser-extension-e05d44?logo=googlechrome&logoColor=white)](#установка)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285f4?logo=googlechrome&logoColor=white)
-[![Release](https://img.shields.io/badge/release-v1.0.0-2ea44f?logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/releases/tag/v1.0.0)
-[![All tests: 502](https://img.shields.io/badge/All%20tests-failing-e05d44?logo=github&logoColor=white)](#тесты)
-[![Store tests: 46/46](https://img.shields.io/badge/Store%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Report tests: 48/48](https://img.shields.io/badge/Report%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Folder tests: 81/81](https://img.shields.io/badge/Folder%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Background tests: 31/31](https://img.shields.io/badge/Background%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Content script tests: 77/77](https://img.shields.io/badge/Content%20script%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Utils tests: 51/51](https://img.shields.io/badge/Utils%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Popup tests: 27/29](https://img.shields.io/badge/Popup%20tests-failing-e05d44?logo=github&logoColor=white)](#тесты)
-[![Pages tests: 78/78](https://img.shields.io/badge/Pages%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Release tests: 19/19](https://img.shields.io/badge/Release%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-[![Integrity tests: 39/39](https://img.shields.io/badge/Integrity%20tests-passing-4c1?logo=github&logoColor=white)](#тесты)
-<!-- badges:end -->
+
+[![Release](https://img.shields.io/github/v/release/allakin/Design-review-checker?sort=semver&label=release&color=2ea44f&logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/releases)
+[![All tests](https://img.shields.io/github/actions/workflow/status/allakin/Design-review-checker/tests.yml?branch=main&label=All%20tests&logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Store tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fstore.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Report tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Freport.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Folder tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Ffolder.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Background tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fbackground.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Content script tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fcontent.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Utils tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Futils.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Popup tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fpopup.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Pages tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fpages.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Release tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Frelease.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+[![Integrity tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fintegrity.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 
 **Расширение для браузера**, чтобы проводить дизайн-ревью вёрстки прямо на живой странице: сравнивать реализацию с макетом, фиксировать расхождения и отдавать разработчику готовый отчёт. Работает в Яндекс Браузере, Chrome, Edge, Arc и других браузерах на Chromium (Manifest V3).
 
@@ -228,7 +228,7 @@ content/icons.js      те же иконки для контент-скрипт�
 lib/constants.js      уровни критичности
 icons/                иконки расширения (PNG) и их исходники (icon.svg, icon-16.svg)
 tests/                автотесты (node:test + jsdom), см. «Тесты»
-scripts/badges.js     прогон наборов тестов и обновление плашек в README
+scripts/badges.js     прогон наборов тестов, блок плашек в README и JSON для них
 scripts/changelog-prepend.js  CHANGELOG.md и черновик релиза на GitHub, см. «Релизы»
 package.json          зависимости и команды для тестов (на работу расширения не влияет)
 .githooks/            pre-commit: тесты перед каждым коммитом
@@ -244,7 +244,7 @@ npm install          # один раз: ставит jsdom (нужен Node.js 2
 npm test             # все тесты, ~10 секунд
 npm run test:watch   # перезапуск при сохранении файлов
 npm run test:coverage  # покрытие кода
-npm run badges       # прогнать наборы и обновить плашки в начале README
+npm run badges       # прогнать наборы по отдельности и сверить блок плашек в README
 npm run changelog-prepend  # собрать раздел CHANGELOG.md для текущей версии (см. «Релизы»)
 npm run hooks:install  # тесты перед каждым git commit (после git init)
 ```
@@ -271,14 +271,22 @@ npm run hooks:install  # тесты перед каждым git commit (посл
 - `normalizeUrl('mailto:a@b.ru')` превращается в `https://mailto:a@b.ru/`, а `normalizeUrl('123')` — в `https://0.0.0.123/`.
 - Описание в `manifest.json` занимает 143 символа, а Chrome Web Store принимает не больше 132.
 
-Плашки в начале README обновляет `npm run badges`: «passing» появляется только после реального успешного прогона набора. Если в репозитории на GitHub включены Actions, тесты запускаются на каждый push и pull request на Node.js 22, 24 и 26 (`.github/workflows/tests.yml`). После push в основную ветку workflow сам запускает `npm run badges` и коммитит обновлённые плашки, если они изменились. Версия на плашке release — последний опубликованный релиз из [GitHub Releases](https://github.com/allakin/Design-review-checker/releases): берётся самый старший тег в формате semver (`v1.2.3`), черновики и пре-релизы не учитываются. Плашка пересобирается и при публикации, правке или удалении релиза. Если релизов ещё нет или GitHub недоступен, на плашке версия из `manifest.json`. Для этого в настройках репозитория (Settings → Actions → General → Workflow permissions) должно быть разрешено «Read and write permissions».
+Если в репозитории на GitHub включены Actions, тесты запускаются на каждый push и pull request на Node.js 22, 24 и 26 (`.github/workflows/tests.yml`). Запустить прогон вручную можно на вкладке Actions → Tests → Run workflow.
+
+Плашки в начале README живые: в файле только адреса, а состояние shields.io берёт при каждом показе страницы, поэтому README не нужно перекоммитивать. Любая плашка тестов ведёт на страницу прогонов `tests.yml` в `main`.
+
+- **All tests** — статус последнего прогона `tests.yml` в `main`.
+- **Наборы** (Store, Popup и остальные) — после каждого push в `main` workflow запускает `npm run badges -- --out <папка>`: наборы прогоняются по отдельности, и результат каждого записывается в JSON в служебную ветку `badges` (она перезаписывается одним коммитом). «passing» появляется только после реального успешного прогона, при падении на плашке «failing» и счёт, например `failing 27/29`. shields.io кэширует плашки около 5 минут.
+- **release** — последний опубликованный релиз из [GitHub Releases](https://github.com/allakin/Design-review-checker/releases): самый старший тег в формате semver (`v1.2.3`), черновики и пре-релизы не учитываются.
+
+Чтобы workflow мог писать в ветку `badges`, в настройках репозитория (Settings → Actions → General → Workflow permissions) должно быть разрешено «Read and write permissions». Если добавили или переименовали набор в `scripts/badges.js`, запустите `npm run badges`: он обновит блок плашек в README, а тест целостности проверит, что блок не отстал.
 
 ## Релизы
 
 Работа идёт в ветке `develop`, релиз выходит после принятия pull request из `develop` в `main` (`.github/workflows/release.yml`).
 
 1. **Каждый push в `develop`.** `npm run changelog-prepend -- --draft` собирает по коммитам с последнего релиза раздел для версии из `manifest.json`. Скрипт вставляет его в начало `CHANGELOG.md` (бот коммитит файл в `develop`) и создаёт или обновляет черновик релиза `vX.Y.Z` на GitHub.
-2. **Pull request `develop → main` принят.** Черновик публикуется как есть, тег ставится на merge-коммит в `main`, плашка Release в README обновляется. Если версию в `manifest.json` не подняли, а в `main` пришли новые коммиты, job падает и релиз не публикуется.
+2. **Pull request `develop → main` принят.** Черновик публикуется как есть, тег ставится на merge-коммит в `main`, плашка release подхватывает новый релиз сама. Если версию в `manifest.json` не подняли, а в `main` пришли новые коммиты, job падает и релиз не публикуется.
 
 Перед pull request в `main` поднимите `version` в `manifest.json` и `package.json`. Пока версия не поднята, черновик не собирается: прошлая версия уже выпущена.
 

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { ICONS } from '../../lib/icons.js';
 import { SEVERITIES } from '../../lib/constants.js';
-import { SUITES, badgesMarkdown, replaceBlock, repoSlug, parseVersion, pickLatestRelease, resolveRelease } from '../../scripts/badges.js';
+import { SUITES, badgesMarkdown, endpointBadge, replaceBlock, repoSlug } from '../../scripts/badges.js';
 
 const ROOT = new URL('../../', import.meta.url);
 const path = (p) => new URL(p, ROOT);
@@ -281,69 +281,55 @@ describe('тесты и плашки', () => {
     for (const f of covered) assert.ok(exists(f), `в SUITES указан несуществующий ${f}`);
   });
 
-  test('в README есть блок плашек с версией релиза и всеми наборами', () => {
+  test('блок плашек в README совпадает с генератором — запустите npm run badges, если менялись наборы', () => {
     const readme = read('README.md');
     const block = readme.split('<!-- badges:start -->')[1]?.split('<!-- badges:end -->')[0];
     assert.ok(block, 'нет блока <!-- badges:start --> … <!-- badges:end -->');
-    const version = block.match(/badge\/release-v(.+?)-2ea44f/)?.[1]?.replace(/--/g, '-');
-    assert.ok(version && parseVersion(version), 'на плашке release нет версии в формате semver — запустите npm run badges');
-    for (const s of SUITES) assert.ok(block.includes(`[${s.label}`) || block.includes(`![${s.label}`), s.label);
+    const repo = block.match(/github\.com\/([\w.-]+\/[\w.-]+)\/actions\/workflows\//)?.[1];
+    assert.ok(repo, 'в блоке нет ссылки на workflow');
+    assert.equal(block.trim(), badgesMarkdown(repo));
   });
 
-  test('генератор: «passing» только при успешном прогоне, иначе «failing»', () => {
+  test('плашки тестов живые и ведут на страницу workflow tests.yml', () => {
+    const lines = badgesMarkdown('o/r').split('\n');
+    const workflow = '(https://github.com/o/r/actions/workflows/tests.yml?query=branch%3Amain)';
+    const all = lines.find((l) => l.startsWith('[![All tests]'));
+    assert.ok(all.includes('https://img.shields.io/github/actions/workflow/status/o/r/tests.yml?branch=main'));
+    assert.ok(all.endsWith(workflow));
+    for (const s of SUITES) {
+      const line = lines.find((l) => l.startsWith(`[![${s.label}]`));
+      assert.ok(line, s.label);
+      assert.ok(line.includes(encodeURIComponent(`https://raw.githubusercontent.com/o/r/badges/${s.id}.json`)), `${s.label}: JSON из ветки badges`);
+      assert.ok(line.endsWith(workflow), `${s.label}: ссылка на workflow`);
+    }
+    assert.equal(new Set(SUITES.map((s) => s.id)).size, SUITES.length, 'id наборов повторяются');
+    assert.ok(lines.some((l) => l.includes('https://img.shields.io/github/v/release/o/r?sort=semver')));
+  });
+
+  test('JSON плашки: «passing» только при успешном прогоне, иначе «failing» со счётом', () => {
     const okRun = { code: 0, tests: 3, pass: 3, fail: 0, todo: 0 };
-    const md = badgesMarkdown('2.4.0', SUITES.map(() => okRun));
-    assert.match(md, /release-v2\.4\.0-/);
-    assert.match(md, /All%20tests-passing-4c1/);
-    const broken = badgesMarkdown('1.0.0', SUITES.map((_, i) => (i === 0 ? { ...okRun, fail: 1, pass: 2, code: 1 } : okRun)));
-    assert.match(broken, /All%20tests-failing-e05d44/);
-    assert.match(broken, /Store%20tests-failing/);
-    assert.match(broken, /Report%20tests-passing/);
+    assert.deepEqual(endpointBadge('Store tests', okRun), {
+      schemaVersion: 1,
+      label: 'Store tests',
+      message: 'passing',
+      color: '4c1',
+      namedLogo: 'github',
+      logoColor: 'white',
+      cacheSeconds: 300,
+    });
+    const failed = endpointBadge('Popup tests', { code: 1, tests: 29, pass: 27, fail: 2, todo: 0 });
+    assert.equal(failed.message, 'failing 27/29');
+    assert.equal(failed.color, 'e05d44');
+    assert.equal(endpointBadge('X', { ...okRun, code: 1 }).message, 'failing 3/3', 'процесс упал — не passing');
+    assert.equal(endpointBadge('X', { ...okRun, tests: 0, pass: 0 }).message, 'failing 0/0', 'ни одного теста — не passing');
   });
 
-  test('плашка release ведёт на страницу релиза, если она известна', () => {
-    const okRun = { code: 0, tests: 1, pass: 1, fail: 0, todo: 0 };
-    const url = 'https://github.com/o/r/releases/tag/v1.2.0';
-    assert.ok(badgesMarkdown('1.2.0', SUITES.map(() => okRun), url).includes(`[![Release](https://img.shields.io/badge/release-v1.2.0-2ea44f?logo=github&logoColor=white)](${url})`));
-    assert.ok(badgesMarkdown('1.2.0', SUITES.map(() => okRun)).includes('\n![Release]('));
-  });
-
-  test('релиз: из списка берётся самый старший опубликованный semver', () => {
-    const rel = (tag_name, extra = {}) => ({ tag_name, html_url: `https://github.com/o/r/releases/tag/${tag_name}`, draft: false, prerelease: false, ...extra });
-    const latest = pickLatestRelease([
-      rel('v1.2.0'),
-      rel('v1.10.0'),
-      rel('v1.9.3'),
-      rel('v2.0.0', { draft: true }),
-      rel('v1.11.0-beta.1', { prerelease: true }),
-      rel('nightly'),
-    ]);
-    assert.deepEqual(latest, { version: '1.10.0', url: 'https://github.com/o/r/releases/tag/v1.10.0' });
-    assert.equal(pickLatestRelease([rel('1.0.0-rc.1'), rel('1.0.0')]).version, '1.0.0');
-    assert.equal(pickLatestRelease([]), null);
-    assert.equal(pickLatestRelease([rel('v3.0.0', { draft: true })]), null);
-  });
-
-  test('релиз: репозиторий определяется по GITHUB_REPOSITORY и адресу origin', () => {
+  test('репозиторий определяется по GITHUB_REPOSITORY и адресу origin', () => {
     assert.equal(repoSlug('allakin/Design-review-checker'), 'allakin/Design-review-checker');
     assert.equal(repoSlug('https://github.com/allakin/Design-review-checker.git\n'), 'allakin/Design-review-checker');
     assert.equal(repoSlug('git@github.com:allakin/Design-review-checker.git'), 'allakin/Design-review-checker');
     assert.equal(repoSlug('https://github.com/o/r'), 'o/r');
     assert.equal(repoSlug('https://gitlab.com/o/r.git'), null);
-  });
-
-  test('релиз: без релизов или без сети — версия из manifest.json', async () => {
-    const reply = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 403, statusText: ok ? 'OK' : 'Forbidden', json: async () => body });
-    const found = await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: reply([{ tag_name: 'v1.4.2', html_url: 'u', draft: false, prerelease: false }]) });
-    assert.equal(found.version, '1.4.2');
-    assert.equal(found.url, 'u');
-    assert.equal((await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: reply([]) })).version, '1.0.0');
-    const denied = await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: reply({}, false) });
-    assert.equal(denied.version, '1.0.0');
-    assert.match(denied.source, /403/);
-    const offline = await resolveRelease('1.0.0', { repo: 'o/r', fetchImpl: async () => { throw new Error('offline'); } });
-    assert.equal(offline.version, '1.0.0');
-    assert.equal(offline.url, 'https://github.com/o/r/releases');
   });
 
   test('генератор заменяет только блок плашек', () => {
