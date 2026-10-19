@@ -136,12 +136,18 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`${passed(r) ? '✔' : '✖'} ${s.label.padEnd(22)} ${r.pass}/${r.tests - r.todo}${r.todo ? ` (todo: ${r.todo})` : ''}`);
   });
 
-  writeFileSync(README, replaceBlock(readFileSync(README, 'utf8'), badgesMarkdown(repo)));
-  console.log(`Блок плашек в README.md сверен (${repo}).`);
+  // Сначала JSON: плашки должны показать результат прогона, даже если README сломан (это поймает тест целостности).
   if (outDir) {
     mkdirSync(outDir, { recursive: true });
     SUITES.forEach((s, i) => writeFileSync(join(outDir, `${s.id}.json`), `${JSON.stringify(endpointBadge(s.label, results[i]), null, 2)}\n`));
     console.log(`JSON плашек записан в ${outDir}.`);
   }
-  if (!results.every(passed)) process.exit(1);
+  try {
+    writeFileSync(README, replaceBlock(readFileSync(README, 'utf8'), badgesMarkdown(repo)));
+    console.log(`Блок плашек в README.md сверен (${repo}).`);
+  } catch (e) {
+    console.error(`✖ README.md: ${e.message}`);
+    process.exitCode = 1;
+  }
+  if (!results.every(passed)) process.exitCode = 1;
 }

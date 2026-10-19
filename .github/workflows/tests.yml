@@ -58,10 +58,14 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Publish badge JSON to the badges branch
-        working-directory: ${{ runner.temp }}/badges
         env:
           TOKEN: ${{ github.token }}
         run: |
+          if ! ls "$RUNNER_TEMP"/badges/*.json > /dev/null 2>&1; then
+            echo "::error::npm run badges не записал JSON плашек — смотрите вывод предыдущего шага."
+            exit 1
+          fi
+          cd "$RUNNER_TEMP/badges"
           git init -q -b badges
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

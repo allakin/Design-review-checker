@@ -71,7 +71,8 @@ jobs:
         with:
           node-version: 24
 
-      # Падает, если версию в manifest.json не подняли, а в main пришли новые коммиты.
+      # Падает, если версию в manifest.json не подняли, а в main пришли правки расширения.
+      # Пришли только тесты, CI или документация — завершается без релиза.
       - name: Publish release draft
         env:
           GITHUB_TOKEN: ${{ github.token }}

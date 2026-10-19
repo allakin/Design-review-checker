@@ -15,6 +15,7 @@ import {
   prependSection,
   syncDraft,
   publishRelease,
+  touchesExtension,
 } from '../../scripts/changelog-prepend.js';
 
 const HASH = '0123456789abcdef0123456789abcdef01234567';
@@ -263,5 +264,16 @@ describe('GitHub Releases', () => {
 
   test('без GITHUB_TOKEN — понятная ошибка', async () => {
     await assert.rejects(syncDraft(REPO, { ...opts(fakeGitHub([])), token: '' }), /GITHUB_TOKEN/);
+  });
+});
+
+describe('нужен ли новый релиз', () => {
+  test('релиз нужен только при правках файлов расширения', () => {
+    assert.equal(touchesExtension(['README.md', 'tests/pages/popup.test.js', '.github/workflows/tests.yml', 'scripts/badges.js']), false);
+    assert.equal(touchesExtension([]), false);
+    assert.equal(touchesExtension(['README.md', 'popup/popup.js']), true);
+    assert.equal(touchesExtension(['manifest.json']), true);
+    assert.equal(touchesExtension(['icons/icon16.png']), true);
+    assert.equal(touchesExtension(['libs/x.js', 'manifest.json.bak']), false, 'только точные пути и папки');
   });
 });

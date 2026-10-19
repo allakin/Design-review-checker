@@ -3,7 +3,6 @@
 <!-- badges:start -->
 [![Browser extension](https://img.shields.io/badge/Browser-extension-e05d44?logo=googlechrome&logoColor=white)](#установка)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285f4?logo=googlechrome&logoColor=white)
-
 [![Release](https://img.shields.io/github/v/release/allakin/Design-review-checker?sort=semver&label=release&color=2ea44f&logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/releases)
 [![All tests](https://img.shields.io/github/actions/workflow/status/allakin/Design-review-checker/tests.yml?branch=main&label=All%20tests&logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 [![Store tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fstore.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
@@ -16,6 +15,7 @@
 [![Pages tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fpages.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 [![Release tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Frelease.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 [![Integrity tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fintegrity.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
+<!-- badges:end -->
 
 **Расширение для браузера**, чтобы проводить дизайн-ревью вёрстки прямо на живой странице: сравнивать реализацию с макетом, фиксировать расхождения и отдавать разработчику готовый отчёт. Работает в Яндекс Браузере, Chrome, Edge, Arc и других браузерах на Chromium (Manifest V3).
 
@@ -286,7 +286,7 @@ npm run hooks:install  # тесты перед каждым git commit (посл
 Работа идёт в ветке `develop`, релиз выходит после принятия pull request из `develop` в `main` (`.github/workflows/release.yml`).
 
 1. **Каждый push в `develop`.** `npm run changelog-prepend -- --draft` собирает по коммитам с последнего релиза раздел для версии из `manifest.json`. Скрипт вставляет его в начало `CHANGELOG.md` (бот коммитит файл в `develop`) и создаёт или обновляет черновик релиза `vX.Y.Z` на GitHub.
-2. **Pull request `develop → main` принят.** Черновик публикуется как есть, тег ставится на merge-коммит в `main`, плашка release подхватывает новый релиз сама. Если версию в `manifest.json` не подняли, а в `main` пришли новые коммиты, job падает и релиз не публикуется.
+2. **Pull request `develop → main` принят.** Черновик публикуется как есть, тег ставится на merge-коммит в `main`, плашка release подхватывает новый релиз сама. Если версию в `manifest.json` не подняли, а в `main` пришли правки расширения (`manifest.json`, `background.js`, `content/`, `lib/`, `popup/`, `pages/`, `icons/`), job падает и релиз не публикуется. Если пришли только тесты, CI или документация, job завершается успешно без релиза: расширение не изменилось.
 
 Перед pull request в `main` поднимите `version` в `manifest.json` и `package.json`. Пока версия не поднята, черновик не собирается: прошлая версия уже выпущена.
 

@@ -41,6 +41,10 @@ const BOT_AUTHORS = ['github-actions[bot]'];
 // Коммиты, которые только поднимают версию («Поднять версию до 1.1.0», «chore: bump version to 1.1.0»), — тоже.
 const VERSION_BUMP = /^(?:\w+(?:\([^)]*\))?!?:\s*)?(?:поднять|повысить|обновить|bump)?\s*(?:верси[юяи]|version|release|релиз)(?![А-Яа-яЁёA-Za-z]).*\d+\.\d+\.\d+/i;
 
+// Файлы самого расширения. Новый релиз нужен, только если менялись они; тесты, CI, скрипты и документация — не повод.
+export const EXTENSION_PATHS = ['manifest.json', 'background.js', 'content/', 'lib/', 'popup/', 'pages/', 'icons/'];
+export const touchesExtension = (files) => files.some((f) => EXTENSION_PATHS.some((p) => (p.endsWith('/') ? f.startsWith(p) : f === p)));
+
 const SEP = '\x1f';
 const END = '\x1e';
 export const LOG_FORMAT = `%H${SEP}%an${SEP}%cs${SEP}%s${SEP}%b${END}`;
@@ -263,6 +267,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     // Черновик в develop сразу после релиза или перезапуск публикации без новых коммитов — обычное состояние.
     if (draft || (publish && !pending)) {
       console.log(msg);
+      process.exit(0);
+    }
+    // В main пришли только тесты, CI или документация — расширение то же, выпускать нечего.
+    if (publish && !touchesExtension(git('diff', '--name-only', tag, 'HEAD').split('\n').filter(Boolean))) {
+      console.log(`${tag} уже выпущена, а с неё не менялись файлы расширения (${EXTENSION_PATHS.join(', ')}) — новый релиз не нужен.`);
       process.exit(0);
     }
     console.error(publish ? `${msg} В main пришли ${plural(pending, ['новый коммит', 'новых коммита', 'новых коммитов'])} — релиз не опубликован.` : msg);
