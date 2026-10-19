@@ -3,6 +3,7 @@
 <!-- badges:start -->
 [![Browser extension](https://img.shields.io/badge/Browser-extension-e05d44?logo=googlechrome&logoColor=white)](#установка)
 ![Manifest V3](https://img.shields.io/badge/Manifest-V3-4285f4?logo=googlechrome&logoColor=white)
+
 [![Release](https://img.shields.io/github/v/release/allakin/Design-review-checker?sort=semver&label=release&color=2ea44f&logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/releases)
 [![All tests](https://img.shields.io/github/actions/workflow/status/allakin/Design-review-checker/tests.yml?branch=main&label=All%20tests&logo=github&logoColor=white)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 [![Store tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fstore.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
@@ -15,7 +16,6 @@
 [![Pages tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fpages.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 [![Release tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Frelease.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
 [![Integrity tests](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fallakin%2FDesign-review-checker%2Fbadges%2Fintegrity.json)](https://github.com/allakin/Design-review-checker/actions/workflows/tests.yml?query=branch%3Amain)
-<!-- badges:end -->
 
 **Расширение для браузера**, чтобы проводить дизайн-ревью вёрстки прямо на живой странице: сравнивать реализацию с макетом, фиксировать расхождения и отдавать разработчику готовый отчёт. Работает в Яндекс Браузере, Chrome, Edge, Arc и других браузерах на Chromium (Manifest V3).
 
