@@ -22,7 +22,8 @@ export function instrumentedContentSource() {
   const end = CONTENT_SRC.lastIndexOf('})();');
   if (end < 0) throw new Error('content.js больше не заканчивается на `})();` — обновите tests/helpers/content.js');
   const hook = `globalThis.__drcTest = { ${EXPORTS.join(', ')}, ui: () => ui, host: () => host };\n`;
-  return CONTENT_SRC.slice(0, end) + hook + CONTENT_SRC.slice(end);
+  // import() в скрипте, исполняемом через window.eval, jsdom не поддерживает — подменяем загрузчиком из теста (loadContent({ modules })).
+  return (CONTENT_SRC.slice(0, end) + hook + CONTENT_SRC.slice(end)).replace(/\bimport\(/g, 'globalThis.__drcImport(');
 }
 
 // Все созданные окна закрываем после тестов: иначе rAF-цикл подсветки и таймеры держат процесс.
@@ -37,7 +38,8 @@ export function closeAllContent() {
   opened.clear();
 }
 
-export function loadContent({ html = '<main><h1>Каталог</h1><button id="buy" class="btn primary">Купить</button></main>', url = 'https://shop.example.com/catalog?x=1', title = 'Каталог', media = () => true, inject = true } = {}) {
+// modules(url) → модуль для import() контент-скрипта; без него загрузка модулей не удаётся (форма с обычным полем описания).
+export function loadContent({ html = '<main><h1>Каталог</h1><button id="buy" class="btn primary">Купить</button></main>', url = 'https://shop.example.com/catalog?x=1', title = 'Каталог', media = () => true, inject = true, modules = null } = {}) {
   const virtualConsole = new VirtualConsole(); // глушим «Not implemented: window.scrollTo» и т.п.
   const dom = new JSDOM(`<!doctype html><html><head><title>${title}</title></head><body>${html}</body></html>`, {
     url,
@@ -89,6 +91,11 @@ export function loadContent({ html = '<main><h1>Каталог</h1><button id="b
     return { ok: true };
   });
   window.chrome = chrome;
+  window.__drcImport = async (moduleUrl) => {
+    const mod = modules?.(moduleUrl);
+    if (!mod) throw new TypeError(`Failed to fetch dynamically imported module: ${moduleUrl}`);
+    return mod;
+  };
 
   if (inject) {
     window.eval(ICONS_SRC);

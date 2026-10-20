@@ -26,7 +26,8 @@ const TOOLS = [
   ['hr', 'minus', 'Разделитель'],
 ];
 
-function getMode() {
+function getMode(remember) {
+  if (!remember) return 'visual';
   try {
     return window.localStorage.getItem(MODE_KEY) === 'source' ? 'source' : 'visual';
   } catch {
@@ -52,7 +53,8 @@ export function editorHtml({ placeholder = '' } = {}) {
 
 // root — элемент .md-ed из editorHtml. onChange(markdown) — при каждом изменении.
 // askLink(currentUrl) → Promise<string|null> — запрос адреса ссылки (диалог страницы).
-export function mountEditor(root, { value = '', onChange = () => {}, askLink = async () => null } = {}) {
+// rememberMode=false — не читать и не сохранять режим в localStorage: на сайте (контент-скрипт) это хранилище сайта.
+export function mountEditor(root, { value = '', onChange = () => {}, askLink = async () => null, rememberMode = true } = {}) {
   const visual = root.querySelector('.md-visual');
   const source = root.querySelector('.md-source');
   const modeBtn = root.querySelector('[data-cmd=mode]');
@@ -66,7 +68,7 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
     source.hidden = mode !== 'source';
     modeBtn.setAttribute('aria-pressed', String(mode === 'source'));
   };
-  applyMode(getMode());
+  applyMode(getMode(rememberMode));
   setEmpty();
 
   let last = value;
@@ -90,9 +92,11 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
       visual.innerHTML = renderMarkdown(source.value);
       setEmpty();
     } else source.value = htmlToMarkdown(visual);
-    try {
-      window.localStorage.setItem(MODE_KEY, next);
-    } catch {}
+    if (rememberMode) {
+      try {
+        window.localStorage.setItem(MODE_KEY, next);
+      } catch {}
+    }
     applyMode(next);
     // Остальные карточки переключаются вместе с этой; карточки, убранные со страницы при перерисовке, забываем.
     for (const other of editors) {
@@ -115,12 +119,13 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
 
   // ---------- Визуальный режим ----------
   const exec = (cmd, arg = null) => document.execCommand(cmd, false, arg);
+  const getSel = () => selectionOf(visual);
   try {
     document.execCommand('defaultParagraphSeparator', false, 'p');
   } catch {}
 
   const selRange = () => {
-    const sel = document.getSelection();
+    const sel = getSel();
     return sel.rangeCount && visual.contains(sel.anchorNode) ? sel.getRangeAt(0) : null;
   };
   const closestIn = (node, selector) => {
@@ -164,7 +169,7 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
     const caret = document.createRange();
     caret.setStart(node, offset);
     caret.collapse(true);
-    const sel = document.getSelection();
+    const sel = getSel();
     sel.removeAllRanges();
     sel.addRange(caret);
   };
@@ -188,7 +193,7 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
     range.insertNode(el);
     const after = document.createTextNode('\u200B');
     el.after(after);
-    const sel = document.getSelection();
+    const sel = getSel();
     const r = document.createRange();
     r.setStart(after, 1);
     r.collapse(true);
@@ -224,8 +229,8 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
       const caret = document.createRange();
       caret.setStart(at[0], Math.min(at[1], at[0].nodeType === 3 ? at[0].length : at[0].childNodes.length));
       caret.collapse(true);
-      document.getSelection().removeAllRanges();
-      document.getSelection().addRange(caret);
+      getSel().removeAllRanges();
+      getSel().addRange(caret);
     } else if (result?.isConnected) placeCaretAtEnd(result);
     return result;
   };
@@ -331,7 +336,7 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
     const existing = closestIn(range.startContainer, 'a');
     const url = await askLink(existing?.getAttribute('href') || '');
     visual.focus();
-    const sel = document.getSelection();
+    const sel = getSel();
     sel.removeAllRanges();
     sel.addRange(saved);
     if (url === null) return;
@@ -382,7 +387,10 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
     }),
   );
 
-  visual.addEventListener('keydown', (e) => {
+  // Контент-скрипт перехватывает клавиатуру раньше редактора (чтобы не срабатывали горячие клавиши сайта)
+  // и передаёт нажатия сам — через handleKeydown.
+  visual.addEventListener('keydown', onKeydown);
+  function onKeydown(e) {
     const mod = isMac ? e.metaKey : e.ctrlKey;
     if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
       e.preventDefault();
@@ -438,7 +446,7 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
         }
       }
     }
-  });
+  }
 
   // Клик по квадратику чек-листа (он нарисован слева от текста пункта) — отметить/снять.
   visual.addEventListener('mousedown', (e) => {
@@ -555,7 +563,7 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
       caret.setStartBefore(br);
     } else caret.setStart(node, 0);
     caret.collapse(true);
-    const sel = document.getSelection();
+    const sel = getSel();
     sel.removeAllRanges();
     sel.addRange(caret);
   }
@@ -590,6 +598,8 @@ export function mountEditor(root, { value = '', onChange = () => {}, askLink = a
   return {
     focus: () => (root.dataset.mode === 'source' ? source : visual).focus(),
     getValue: () => last,
+    // Нажатие, перехваченное снаружи до редактора; обрабатывается, только если фокус в визуальном поле.
+    handleKeydown: (e) => e.composedPath().includes(visual) && onKeydown(e),
   };
 }
 
@@ -604,11 +614,18 @@ function preText(node) {
   return out;
 }
 
+// Выделение в том дереве, где лежит узел: в Shadow DOM document.getSelection() показывает вместо узлов
+// теневого дерева его хост, а ShadowRoot.getSelection() (Chrome) — настоящие узлы.
+function selectionOf(node) {
+  const root = node.getRootNode();
+  return typeof root.getSelection === 'function' ? root.getSelection() : document.getSelection();
+}
+
 function placeCaretAtEnd(el) {
   const r = document.createRange();
   r.selectNodeContents(el);
   r.collapse(false);
-  const sel = document.getSelection();
+  const sel = selectionOf(el);
   sel.removeAllRanges();
   sel.addRange(r);
 }

@@ -206,6 +206,18 @@ describe('замечания', () => {
     assert.equal(raw('reviewIndex')[0].issueCount, 2);
   });
 
+  test('addIssue: «Визуальные пояснения» из формы на сайте получают id и дату', async () => {
+    const r = await store.createReview({ title: 'A' });
+    const { issue } = await store.addIssue(r.id, { title: 'x', fixImages: [{ src: 'data:image/png;base64,AA==', name: 'a.png' }, { src: 'data:image/png;base64,BB==' }] });
+    assert.equal(issue.fixImages.length, 2);
+    assert.deepEqual(issue.fixImages.map(({ src, name, addedAt }) => [src, name, addedAt]), [
+      ['data:image/png;base64,AA==', 'a.png', issue.createdAt],
+      ['data:image/png;base64,BB==', '', issue.createdAt],
+    ]);
+    assert.ok(issue.fixImages.every((img) => img.id) && issue.fixImages[0].id !== issue.fixImages[1].id);
+    assert.equal((await store.addIssue(r.id, { title: 'без картинок' })).issue.fixImages, undefined);
+  });
+
   test('addIssue в несуществующее ревью — понятная ошибка', async () => {
     await assert.rejects(store.addIssue('nope', { title: 'x' }), /Ревью не найдено — создайте новое/);
   });
