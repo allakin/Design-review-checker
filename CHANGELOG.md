@@ -7,6 +7,7 @@
 
 ### Новое
 
+- Навигация по замечаниям в HTML-отчёте ([1fbae2a](https://github.com/allakin/Design-review-checker/commit/1fbae2a1a6c60fe5e221e4ec6c5c0e4f1412d03c))
 - Сверять ревью с папкой reviews-results при открытии ([f329b11](https://github.com/allakin/Design-review-checker/commit/f329b11b916d4be6c8dcf603f4a70ecf312bc139))
 
 ### Исправления
