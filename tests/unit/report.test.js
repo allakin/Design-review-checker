@@ -11,6 +11,7 @@ import {
   buildReportDocument,
   lightboxIcons,
   installLightbox,
+  installToc,
   REPORT_CSS,
   SPECS_CSS,
   LIGHTBOX_CSS,
@@ -161,7 +162,7 @@ describe('buildReportBody', () => {
 
   test('тикеты: кликабельные ссылки или «не указан»', () => {
     const doc = bodyDoc(makeReview({ devTicketUrl: 'https://st.example.com/DEV-1/', designTicketUrl: '' }));
-    const [dev, design] = doc.querySelectorAll('.r-tasks:not(.r-pages) > *');
+    const [dev, design] = doc.querySelectorAll('.r-tasks > *');
     assert.equal(dev.tagName, 'A');
     assert.equal(dev.getAttribute('href'), 'https://st.example.com/DEV-1/');
     assert.equal(dev.querySelector('.task-link').textContent, 'st.example.com/DEV-1');
@@ -170,24 +171,29 @@ describe('buildReportBody', () => {
     assert.equal(design.querySelector('.task-link').textContent, 'не указан');
   });
 
-  test('проверенные страницы: по одной карточке на URL, без дублей', () => {
-    const issues = [
-      makeIssue({ page: { url: 'https://shop.ru/cart?x=1', title: 'Корзина' } }),
-      makeIssue({ page: { url: 'https://shop.ru/cart?x=1', title: 'Корзина (повтор)' } }),
-      makeIssue({ page: { url: 'https://shop.ru/pay/', title: '' } }),
-      makeIssue({ page: { url: 'javascript:alert(1)', title: 'XSS' } }),
-      makeIssue({ page: undefined }),
-    ];
-    const cards = bodyDoc(makeReview({ issues })).querySelectorAll('.r-pages .task');
-    assert.equal(cards.length, 2);
-    assert.equal(cards[0].querySelector('.task-link').textContent, 'Корзина');
-    assert.equal(cards[0].querySelector('.task-sub').textContent, 'shop.ru/cart');
-    assert.equal(cards[1].querySelector('.task-link').textContent, 'shop.ru/pay');
-    assert.equal(cards[1].querySelector('.task-sub'), null);
+  test('в шапке нет блока проверенных страниц — ссылка на страницу есть в каждом замечании', () => {
+    const doc = bodyDoc(makeReview({ issues: [makeIssue({ page: { url: 'https://shop.ru/cart', title: 'Корзина' } })] }));
+    assert.equal(doc.querySelectorAll('.r-tasks').length, 1);
+    assert.doesNotMatch(doc.body.textContent, /Проверенная страница/);
+    assert.equal(doc.querySelector('#issue-1 .props a[href="https://shop.ru/cart"]').textContent, 'Корзина');
   });
 
-  test('нет страниц — нет блока страниц', () => {
-    assert.equal(bodyDoc(makeReview({ issues: [makeIssue({ page: null })] })).querySelector('.r-pages'), null);
+  test('навигация «В этом отчёте»: сводка и все замечания со ссылками на якоря', () => {
+    const issues = [makeIssue({ title: 'Отступ' }), makeIssue({ title: XSS })];
+    const doc = bodyDoc(makeReview({ issues }));
+    const nav = doc.querySelector('.r-layout > nav.r-nav');
+    assert.ok(nav);
+    assert.equal(nav.querySelector('.r-nav-title').textContent, 'В этом отчёте:');
+    const links = [...nav.querySelectorAll('a')];
+    assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#summary', '#issues', '#issue-1', '#issue-2']);
+    for (const a of links) assert.ok(doc.getElementById(a.getAttribute('href').slice(1)), a.getAttribute('href'));
+    assert.equal(links[2].textContent, '#1 Отступ');
+    assert.equal(links[3].textContent, `#2 ${XSS}`);
+    assert.equal(nav.querySelector('img'), null);
+  });
+
+  test('пустое ревью — без навигации', () => {
+    assert.equal(bodyDoc(makeReview()).querySelector('.r-nav'), null);
   });
 
   test('карточка замечания: описание, макет, страница, элемент, окно, дата', () => {
@@ -305,6 +311,58 @@ describe('стили', () => {
     assert.ok(REPORT_CSS.includes(SPECS_CSS));
     assert.match(REPORT_CSS, /@media print/);
     assert.match(REPORT_CSS, /@page \{ size: A4/);
+  });
+
+  test('подписи блоков замечания — как в тексте, без капса', () => {
+    const rule = REPORT_CSS.match(/\.i-label \{[^}]*\}/)[0];
+    assert.doesNotMatch(rule, /text-transform/);
+  });
+
+  test('строки свойств замечания разнесены, значения не слипаются', () => {
+    assert.match(REPORT_CSS, /dl\.props \{[^}]*gap: 10px 16px;/);
+  });
+
+  test('навигация только на широком экране и не попадает в PDF', () => {
+    assert.match(REPORT_CSS, /@media \(max-width: 1180px\) \{ \.r-nav \{ display: none; \} \}/);
+    assert.match(REPORT_CSS.slice(REPORT_CSS.indexOf('@media print')), /\.r-nav \{ display: none !important; \}|\.r-nav[^{]*\{ display: none !important/);
+  });
+});
+
+describe('installToc (навигация «В этом отчёте»)', () => {
+  function setup(n = 3) {
+    const review = makeReview({ issues: Array.from({ length: n }, (_, k) => makeIssue({ title: `Замечание ${k + 1}` })) });
+    const dom = new JSDOM(`<!doctype html><body>${buildReportBody(review)}</body>`, { pretendToBeVisual: true });
+    const doc = dom.window.document;
+    installToc(doc);
+    const active = () => [...doc.querySelectorAll('.r-nav a.active')].map((a) => a.getAttribute('href'));
+    return { dom, doc, active };
+  }
+
+  test('сразу подсвечен один пункт', () => {
+    const { dom, doc, active } = setup();
+    assert.equal(active().length, 1);
+    assert.equal(doc.querySelector('.r-nav a.active').getAttribute('aria-current'), 'true');
+    dom.window.close();
+  });
+
+  test('клик по пункту делает его активным, прежний гаснет', () => {
+    const { dom, doc, active } = setup();
+    const before = doc.querySelector('.r-nav a.active');
+    doc.querySelector('.r-nav a[href="#issue-1"]').click();
+    assert.deepEqual(active(), ['#issue-1']);
+    assert.equal(before.getAttribute('aria-current'), null);
+    dom.window.close();
+  });
+
+  test('без навигации (пустое ревью) не падает', () => {
+    const dom = new JSDOM(`<!doctype html><body>${buildReportBody(makeReview())}</body>`);
+    assert.doesNotThrow(() => installToc(dom.window.document));
+  });
+
+  test('работает в скачанном файле, открытом с диска', () => {
+    const dom = new JSDOM(buildReportDocument(makeReview({ issues: [makeIssue(), makeIssue()] })), { runScripts: 'dangerously', pretendToBeVisual: true });
+    assert.equal(dom.window.document.querySelectorAll('.r-nav a.active').length, 1);
+    dom.window.close();
   });
 });
 
