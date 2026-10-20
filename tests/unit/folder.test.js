@@ -705,6 +705,110 @@ describe('несохранённые на диск изменения (дост�
   });
 });
 
+describe('checkFolderContents (сверка расширения с папкой)', () => {
+  async function savedReviews(titles, perm = 'granted') {
+    const root = await connected(perm);
+    const reviews = [];
+    for (const title of titles) {
+      const r = await store.createReview({ title });
+      await folder.writeReview(root, await store.getReview(r.id));
+      reviews.push(r);
+    }
+    return { root, reviews };
+  }
+
+  test('всё на месте — пропавших нет', async () => {
+    await savedReviews(['A', 'B']);
+    assert.deepEqual(await folder.checkFolderContents(), { checked: true, missing: [], found: 2, folderGone: false, dirName: 'reviews-results' });
+  });
+
+  test('папку очистили вручную — все сохранённые ревью пропали', async () => {
+    const { root, reviews } = await savedReviews(['A', 'B']);
+    root.children.clear();
+    const check = await folder.checkFolderContents();
+    assert.equal(check.found, 0);
+    assert.deepEqual(check.missing.map((m) => m.id).sort(), reviews.map((r) => r.id).sort());
+  });
+
+  test('удалили одну подпапку — пропало только это ревью', async () => {
+    const { root, reviews } = await savedReviews(['A', 'B']);
+    await root.removeEntry(names()[reviews[0].id], { recursive: true });
+    const check = await folder.checkFolderContents();
+    assert.deepEqual(check.missing.map((m) => m.title), ['A']);
+    assert.equal(check.found, 1);
+  });
+
+  test('переименованная подпапка не считается пропавшей: ревью ищется по id в review.json', async () => {
+    const { root, reviews } = await savedReviews(['A']);
+    const sub = root.at(names()[reviews[0].id]);
+    root.children.delete(sub.name);
+    sub.name = 'Переименовал';
+    root.children.set(sub.name, sub);
+    assert.deepEqual((await folder.checkFolderContents()).missing, []);
+  });
+
+  test('ни разу не сохранённые ревью — не пропавшие, а несохранённые', async () => {
+    await connected();
+    await store.createReview({ title: 'Ещё не на диске' });
+    assert.deepEqual((await folder.checkFolderContents()).missing, []);
+  });
+
+  test('без доступа или без папки проверка не выполняется', async () => {
+    const { root } = await savedReviews(['A'], 'prompt');
+    root.children.clear();
+    assert.deepEqual(await folder.checkFolderContents(), { checked: false, missing: [], found: 0, folderGone: false });
+    assert.equal(root.permission, 'prompt', 'разрешение не запрашивается');
+    await folder.clearDir();
+    assert.equal((await folder.checkFolderContents()).checked, false);
+  });
+
+  test('папку удалили целиком — folderGone, все сохранённые ревью пропали', async () => {
+    const { root } = await savedReviews(['A']);
+    root.entries = async function* () {
+      const e = new Error('Каталог не найден');
+      e.name = 'NotFoundError';
+      throw e;
+    };
+    const check = await folder.checkFolderContents();
+    assert.equal(check.folderGone, true);
+    assert.deepEqual(check.missing.map((m) => m.title), ['A']);
+  });
+
+  test('в папке есть повреждённый review.json — пропавшими никого не считаем', async () => {
+    const { root } = await savedReviews(['A']);
+    root.children.clear();
+    root.put('Чьё-то ревью/review.json', '{ битый json');
+    assert.deepEqual((await folder.checkFolderContents()).missing, []);
+  });
+
+  test('resaveMissing записывает пропавшие ревью заново', async () => {
+    const { root, reviews } = await savedReviews(['A', 'B']);
+    root.children.clear();
+    assert.equal(await folder.resaveMissing(reviews.map((r) => r.id)), 2);
+    assert.equal(root.list().length, 2);
+    assert.deepEqual((await folder.checkFolderContents()).missing, []);
+  });
+
+  test('resaveMissing без доступа: ревью становятся несохранёнными и допишутся позже', async () => {
+    const { root, reviews } = await savedReviews(['A']);
+    root.children.clear();
+    root.permission = 'prompt';
+    assert.equal(await folder.resaveMissing([reviews[0].id]), 0);
+    assert.deepEqual((await folder.unsavedReviews()).map((m) => m.id), [reviews[0].id]);
+  });
+
+  test('forgetMissing удаляет ревью из расширения и забывает их подпапки; остальные не трогает', async () => {
+    const { root, reviews } = await savedReviews(['A', 'B']);
+    await root.removeEntry(names()[reviews[0].id], { recursive: true });
+    await folder.forgetMissing([reviews[0].id]);
+    assert.deepEqual((await store.listReviews()).map((m) => m.title), ['B']);
+    assert.equal(names()[reviews[0].id], undefined);
+    assert.equal(chrome.storage.local.data.get('folderSynced')[reviews[0].id], undefined);
+    assert.deepEqual((await folder.checkFolderContents()).missing, []);
+    assert.equal(root.list().length, 1, 'папка оставшегося ревью на месте');
+  });
+});
+
 describe('версия формата записи', () => {
   test('ревью, записанные прежним форматом (или старым кодом), считаются несохранёнными', async () => {
     const root = await connected();

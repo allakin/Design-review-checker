@@ -26,6 +26,7 @@
     `<svg class="gi" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" aria-hidden="true">${globalThis.__drcIcons?.[name] || ''}</svg>`;
   const MAX_SHOT_PX = 30000; // предел высоты canvas
   const MAX_SEGMENTS = 25;
+  const PASTE_KEY = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '') ? '⌘V' : 'Ctrl+V';
 
   const STYLES = `
     :host { all: initial; }
@@ -81,7 +82,7 @@
     .btn-light { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
     .btn-light:hover { background: var(--surface-hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
 
-    .panel { position: fixed; top: 16px; right: 16px; width: 380px; max-height: calc(100vh - 32px); pointer-events: auto;
+    .panel { position: fixed; top: 16px; right: 16px; width: 400px; max-height: calc(100vh - 32px); pointer-events: auto;
              display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(24px); color: var(--text); border-radius: 18px;
              box-shadow: var(--glass-shadow); font-size: 13px; }
     .panel.left { right: auto; left: 16px; }
@@ -95,6 +96,12 @@
     .shot { border: 1px solid var(--line); border-radius: 12px; background: repeating-conic-gradient(rgba(255, 255, 255, .045) 0 25%, transparent 0 50%) 0 0 / 16px 16px, rgba(0, 0, 0, .25);
             display: grid; place-items: center; max-height: 220px; overflow: hidden; padding: 6px; }
     .shot canvas { max-width: 100%; max-height: 206px; display: block; object-fit: contain; border-radius: 3px; }
+    .shot { position: relative; }
+    .shot-retake { position: absolute; top: 8px; right: 8px; padding: 5px 9px; font-size: 12px; border-radius: 8px; color: var(--text);
+                   background: rgba(20, 20, 20, .82); backdrop-filter: blur(8px); box-shadow: 0 0 0 1px var(--line-strong), 0 4px 12px rgba(0, 0, 0, .35); }
+    .shot-retake:hover { background: rgba(40, 40, 40, .92); color: #fff; }
+    .shot-retake:disabled { cursor: progress; color: var(--text-2); }
+    .specs-wrap { display: contents; }
     .shot-meta { font: 11px ui-monospace, Menlo, monospace; color: var(--text-3); margin-top: -6px; word-break: break-all; }
     label { display: flex; flex-direction: column; gap: 6px; font-weight: 500; font-size: 12px; color: var(--text-2); }
     label .req { color: var(--danger); }
@@ -158,6 +165,77 @@
     .btn-danger:hover { background: linear-gradient(180deg, #f6604f, #e0392b); }
     .busy { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: auto; cursor: progress; }
     .busy span { background: var(--glass); backdrop-filter: blur(18px); color: var(--text); padding: 11px 18px; border-radius: 12px; font-size: 13px; box-shadow: var(--glass-shadow); }
+
+    /* Поле без <label>: клик по пустому месту редактора иначе «нажимал» бы первую кнопку его панели */
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field-label { font-weight: 500; font-size: 12px; color: var(--text-2); }
+
+    /* Редактор описания (pages/md-editor.js) — как на странице ревью (pages/review.css), ужат под ширину панели */
+    .md-ed { border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .04); transition: border-color .15s, box-shadow .15s, background .15s; }
+    .md-ed:hover { border-color: var(--line-strong); }
+    .md-ed:focus-within { border-color: var(--accent); box-shadow: var(--ring); background: rgba(255, 255, 255, .06); }
+    .md-toolbar { display: flex; align-items: center; gap: 1px; flex-wrap: wrap; padding: 4px 5px; border-bottom: 1px solid var(--line); }
+    .md-tool, .md-mode { height: 26px; min-width: 26px; padding: 0 5px; border-radius: 7px; background: transparent; color: var(--text-3); font-weight: 600; transition: background .12s, color .12s; }
+    .md-tool:hover, .md-mode:hover { background: var(--surface-hover); color: var(--text); }
+    .md-sep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 4px; }
+    .md-spacer { flex: 1; }
+    .md-mode span { display: none; } /* в узкой панели — только значок, подсказка в title */
+    .md-mode[aria-pressed=true] { background: rgba(62, 207, 142, .14); color: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(62, 207, 142, .35); }
+    .md-ed .md-visual, .md-ed .md-source {
+      display: block; width: 100%; min-height: 96px; max-height: 40vh; overflow: auto; resize: vertical; padding: 9px 11px; margin: 0;
+      border: 0; border-radius: 0 0 10px 10px; background: transparent; box-shadow: none; color: var(--text); font: 400 13px/1.5 sans-serif; font-family: inherit; outline: none;
+    }
+    .md-ed .md-source { font: 12px/1.6 ui-monospace, Menlo, monospace; }
+    .md-ed .md-source:hover, .md-ed .md-source:focus { border: 0; box-shadow: none; background: transparent; }
+    .md-visual.is-empty { position: relative; }
+    .md-visual.is-empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; position: absolute; }
+    .md-ed .md-visual h1, .md-ed .md-visual h2, .md-ed .md-visual h3 { color: #fff; }
+    .md-ed .md-visual code { background: rgba(0, 0, 0, .35); border-color: var(--line-strong); color: #f5d0a9; }
+    .md-ed .md-visual pre { background: rgba(0, 0, 0, .35); border-color: var(--line); }
+    .md-ed .md-visual pre code { color: var(--text); background: none; border: 0; padding: 0; border-radius: 0; }
+    .md-ed .md-visual pre[data-lang]::before { color: var(--text-3); }
+    .md-ed .md-visual blockquote + blockquote { margin-top: -8px; padding-top: 0; }
+    .md-ed .md-visual blockquote { border-left-color: rgba(62, 207, 142, .5); color: var(--text-2); }
+    .md-ed .md-visual hr { border-top-color: var(--line-strong); }
+    .md-ed .md-visual a { color: var(--accent-soft); }
+    .md-ed .md-visual li.todo::before { border-color: var(--text-3); background: transparent; cursor: pointer; }
+    .md-ed .md-visual li.todo[data-checked="true"]::before { background-color: #16a34a; border-color: #16a34a; }
+    .md-ed .md-visual li.todo[data-checked="true"] { color: var(--text-3); text-decoration-color: rgba(255, 255, 255, .35); }
+
+    /* «Визуальные пояснения» — как на странице ревью (pages/review.css) */
+    .fix { position: relative; display: flex; flex-direction: column; gap: 6px; }
+    .fix-head { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+    .fix-head .spacer { flex: 1; }
+    .fix-count { font-size: 11px; font-weight: 600; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--line); border-radius: 999px; padding: 0 7px; font-variant-numeric: tabular-nums; }
+    .fix-add-btn { padding: 4px 8px; font-size: 12px; color: var(--accent-soft); background: transparent; border-radius: 8px; }
+    .fix-add-btn:hover { background: rgba(62, 207, 142, .14); color: #fff; }
+    .fix-body { max-height: 196px; overflow-y: auto; overscroll-behavior: contain; padding: 6px; border-radius: 12px; border: 1px solid var(--line); background: rgba(0, 0, 0, .22);
+                display: grid; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); grid-auto-rows: 80px; gap: 6px; }
+    .fix-thumb { position: relative; border-radius: 9px; overflow: hidden; border: 1px solid var(--line);
+                 background: repeating-conic-gradient(rgba(255, 255, 255, .045) 0 25%, transparent 0 50%) 0 0 / 12px 12px, rgba(0, 0, 0, .25); }
+    .fix-thumb canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .fix-del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; border-radius: 7px; background: rgba(16, 16, 16, .82); color: var(--text-2);
+               opacity: 0; box-shadow: 0 0 0 1px var(--line-strong); }
+    .fix-thumb:hover .fix-del, .fix-del:focus-visible { opacity: 1; }
+    .fix-del:hover { background: #d92d20; color: #fff; }
+    .fix-tile-add { border-radius: 9px; border: 1px dashed var(--line-strong); background: transparent; color: var(--text-3); padding: 0; }
+    .fix-tile-add:hover { border-color: var(--accent); color: var(--accent-soft); background: rgba(62, 207, 142, .14); }
+    .fix-empty { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 14px 16px; text-align: center; color: var(--text-3); font-weight: 400; border: 1px dashed var(--line-strong); }
+    .fix-empty b { color: var(--text-2); font-weight: 600; font-size: 13px; }
+    .fix-empty span { font-size: 11px; display: block; }
+    .fix-empty:hover { border-color: var(--accent); background: rgba(62, 207, 142, .14); color: var(--accent-soft); }
+    .fix-empty:hover b { color: var(--text); }
+    .fix-drop { display: none; position: absolute; inset: 32px 0 0; border-radius: 12px; border: 2px dashed var(--accent); background: rgba(13, 40, 28, .9); color: var(--accent-soft);
+                font-weight: 600; font-size: 13px; place-items: center; align-content: center; gap: 6px; pointer-events: none; }
+    .fix.drop .fix-drop { display: grid; justify-items: center; }
+
+    /* Запрос ссылки для редактора описания */
+    .link-box { position: absolute; left: 12px; right: 12px; bottom: 12px; border-radius: 14px; background: #1f1f1f; border: 1px solid var(--line-strong);
+                box-shadow: 0 16px 40px rgba(0, 0, 0, .6); padding: 14px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
+    .link-head { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
+    .link-head .gi { color: var(--accent-soft); }
+    .desc-hint { display: flex; gap: 6px; align-items: flex-start; line-height: 1.4; color: #fbbf72; }
+    .desc-hint .gi { margin-top: 1px; }
   `;
 
   const state = {
@@ -173,6 +251,11 @@
     childStack: [],
     shot: null,
     severity: DEFAULT_SEVERITY,
+    formSeq: 0, // номер открытой формы: асинхронная работа от прошлой формы не трогает новую
+    editor: null, // редактор описания (pages/md-editor.js), пока не загружен — обычное поле
+    fixImages: [], // «Визуальные пояснения» формы: [{ src, name, thumb }], сохраняются вместе с замечанием
+    linkDone: null, // открыт запрос ссылки для редактора — функция его закрытия
+    retaking: false, // идёт «Переснять»
     panelLeft: false,
     toastTimer: 0,
     rafId: 0,
@@ -214,9 +297,10 @@
     ui.bar.querySelector('[data-act=cancel-pick]').addEventListener('click', () => cancel());
 
     // Клики и прочие события внутри нашего UI не должны доходить до обработчиков страницы.
-    for (const type of ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'contextmenu', 'wheel']) {
+    for (const type of ['click', 'dblclick', 'mousedown', 'mouseup', 'pointerdown', 'pointerup', 'contextmenu', 'wheel', 'paste', 'dragenter', 'dragover', 'dragleave', 'drop']) {
       root.addEventListener(type, (e) => e.stopPropagation());
     }
+    bindFixDrop(ui.panel);
     document.documentElement.appendChild(host);
   }
 
@@ -282,6 +366,7 @@
     ensureUi();
     closePanel();
     hideToast();
+    loadModules(); // заранее, пока пользователь выбирает элемент: к открытию формы редактор уже готов
     state.mode = 'picking';
     state.hovered = null;
     state.childStack = [];
@@ -394,12 +479,13 @@
       if (state.mode === 'form' && isOurs(e)) {
         if (e.key === 'Escape') {
           e.preventDefault();
-          if (ui.panel.querySelector('.discard')) hideDiscard();
+          if (state.linkDone) state.linkDone(null);
+          else if (ui.panel.querySelector('.discard')) hideDiscard();
           else requestClose();
         } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
           e.preventDefault();
-          save();
-        }
+          if (!state.linkDone) save();
+        } else state.editor?.handleKeydown(e); // до редактора событие уже не дойдёт — передаём сами
         // Горячие клавиши сайта не должны срабатывать, пока пользователь печатает в форме.
         e.stopImmediatePropagation();
       }
@@ -419,26 +505,28 @@
     state.styles = collectStyles(el);
     ui.hl.hidden = true;
     ui.busy.hidden = false;
-    let list = null;
     try {
-      if (isDropdownSelect(el)) {
-        // Список нативного select рисует ОС — его нельзя снять. Показываем такой же список прямо на странице.
-        list = openSelectList(el);
-        const union = () => unionRect(el.getBoundingClientRect(), list.getBoundingClientRect());
-        state.shot = await captureElement(el, { rectOf: union });
-        state.shot.note = 'Список select раскрыт расширением: нативный выпадающий список рисует система, поэтому показана его копия';
-      } else {
-        state.shot = await captureElement(el);
-      }
-      list?.remove();
-      list = null;
+      state.shot = await shootElement(el);
       openForm(el);
     } catch (err) {
       reset();
       showToast(`Не удалось сделать скриншот: ${err.message}`, { error: true });
     } finally {
-      list?.remove();
       ui.busy.hidden = true;
+    }
+  }
+
+  async function shootElement(el) {
+    if (!isDropdownSelect(el)) return captureElement(el);
+    // Список нативного select рисует ОС — его нельзя снять. Показываем такой же список прямо на странице.
+    const list = openSelectList(el);
+    try {
+      const union = () => unionRect(el.getBoundingClientRect(), list.getBoundingClientRect());
+      const shot = await captureElement(el, { rectOf: union });
+      shot.note = 'Список select раскрыт расширением: нативный выпадающий список рисует система, поэтому показана его копия';
+      return shot;
+    } finally {
+      list.remove();
     }
   }
 
@@ -516,12 +604,15 @@
   async function grab() {
     const res = await chrome.runtime.sendMessage({ type: 'drc:capture' });
     if (!res?.ok) throw new Error(res?.error || 'нет ответа от расширения');
-    const b64 = res.dataUrl.slice(res.dataUrl.indexOf(',') + 1);
-    const bin = atob(b64);
+    // createImageBitmap из Blob не зависит от CSP страницы (в отличие от <img src="data:...">).
+    return createImageBitmap(dataUrlToBlob(res.dataUrl));
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    const bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    // createImageBitmap из Blob не зависит от CSP страницы (в отличие от <img src="data:...">).
-    return createImageBitmap(new Blob([bytes], { type: 'image/png' }));
+    return new Blob([bytes], { type: dataUrl.slice(5, dataUrl.indexOf(';')) || 'image/png' });
   }
 
   // Фиксированные/липкие элементы (шапки, чаты, баннеры) перекрывают блок при прокрутке — прячем на время съёмки.
@@ -1053,6 +1144,7 @@
   }
 
   function formHasInput() {
+    if (state.fixImages.length || state.editor?.getValue().trim()) return true;
     return [...ui.panel.querySelectorAll('input, textarea')].some((f) => f.value.trim());
   }
 
@@ -1109,9 +1201,10 @@
   function openForm(el) {
     state.mode = 'form';
     state.severity = DEFAULT_SEVERITY;
+    const formId = ++state.formSeq;
     const g = state.region;
     const r = el ? el.getBoundingClientRect() : { left: g.left - window.scrollX, width: g.width, height: g.height };
-    state.panelLeft = r.left + r.width / 2 > window.innerWidth / 2 && r.left > 420;
+    state.panelLeft = r.left + r.width / 2 > window.innerWidth / 2 && r.left > 440;
 
     const p = ui.panel;
     p.classList.toggle('left', state.panelLeft);
@@ -1122,17 +1215,19 @@
         <button class="icon-btn" data-act="cancel" title="Отмена (Esc)">${I('xmark', 16)}</button>
       </div>
       <div class="panel-body">
-        <div class="shot"></div>
+        <div class="shot">
+          <button type="button" class="shot-retake" data-act="retake" title="Снять заново — если блок на странице изменился">${I('camera', 14)} Переснять</button>
+        </div>
         <div class="shot-meta"></div>
-        ${contrastHtml(state.styles?.contrast)}
-        ${specsHtml(state.styles, state.elementInfo?.attributes)}
+        <div class="specs-wrap" data-specs></div>
         <label><span>Название <span class="req">*</span></span>
           <input type="text" name="title" maxlength="200" placeholder="Например: Отступ кнопки не совпадает с макетом">
           <span class="err" data-err="title" hidden>Укажите название</span>
         </label>
-        <label>Описание
-          <textarea name="description" placeholder="Что не так, как должно быть, шаги воспроизведения"></textarea>
-        </label>
+        <div class="field" data-desc><span class="field-label">Описание</span>
+          <textarea name="description" placeholder="${DESC_PLACEHOLDER}"></textarea>
+        </div>
+        <section class="fix" data-fix hidden></section>
         <label>Критичность
           <div class="sev">${SEVERITIES.map(
             (s) => `<button type="button" data-sev="${s.id}" style="--fg:${s.color};--bg:${s.bg}" aria-pressed="${s.id === DEFAULT_SEVERITY}">${s.label}</button>`,
@@ -1151,24 +1246,8 @@
       </div>
     `;
     p.querySelector('.sub').textContent = `Ревью: ${state.review?.title || '—'}`;
-    const shotBox = p.querySelector('.shot');
-    shotBox.append(state.shot.canvas);
-    p.querySelector('.shot-meta').textContent =
-      (el ? `${describe(el)} · ${Math.round(r.width)}×${Math.round(r.height)}` : state.elementInfo.name) +
-      (state.shot.truncated ? ' · снят не целиком' : '') +
-      (state.shot.note && el ? ' · список раскрыт расширением' : '');
-    p.querySelector('[data-act=copy-css]')?.addEventListener('click', async (e) => {
-      e.preventDefault(); // не сворачивать <details>
-      const btn = e.currentTarget;
-      const css = `${state.elementInfo?.selector || describe(el)} {\n${stylesAsCss(state.styles)}\n}`;
-      try {
-        await navigator.clipboard.writeText(css);
-        btn.innerHTML = `${I('check', 12)} Скопировано`;
-      } catch {
-        btn.textContent = 'Не удалось';
-      }
-      setTimeout(() => (btn.innerHTML = `${I('copy', 12)} Копировать CSS`), 1500);
-    });
+    renderShot();
+    p.querySelector('[data-act=retake]').addEventListener('click', retake);
 
     p.querySelector('[data-act=cancel]').addEventListener('click', requestClose);
     p.querySelector('[data-act=side]').addEventListener('click', () => {
@@ -1185,11 +1264,303 @@
     );
     p.hidden = false;
     trackSelected();
-    setTimeout(() => p.querySelector('[name=title]').focus(), 0);
+    setTimeout(() => p.querySelector('[name=title]')?.focus(), 0);
+    upgradeForm(formId);
+  }
+
+  // Превью, подпись и данные элемента — перерисовываются и после «Переснять».
+  function renderShot() {
+    const p = ui.panel;
+    const el = state.selected;
+    const shotBox = p.querySelector('.shot');
+    shotBox.querySelector('canvas')?.remove();
+    shotBox.prepend(state.shot.canvas);
+    const info = state.elementInfo;
+    p.querySelector('.shot-meta').textContent =
+      (el ? `${describe(el)} · ${info.width}×${info.height}` : info.name) +
+      (state.shot.truncated ? ' · снят не целиком' : '') +
+      (state.shot.note && el ? ' · список раскрыт расширением' : '');
+
+    const specs = p.querySelector('[data-specs]');
+    const wasOpen = !!specs.querySelector('details[open]');
+    specs.innerHTML = contrastHtml(state.styles?.contrast) + specsHtml(state.styles, info?.attributes);
+    if (wasOpen) specs.querySelector('details')?.setAttribute('open', '');
+    specs.querySelector('[data-act=copy-css]')?.addEventListener('click', async (e) => {
+      e.preventDefault(); // не сворачивать <details>
+      const btn = e.currentTarget;
+      const css = `${state.elementInfo?.selector || describe(el)} {\n${stylesAsCss(state.styles)}\n}`;
+      try {
+        await navigator.clipboard.writeText(css);
+        btn.innerHTML = `${I('check', 12)} Скопировано`;
+      } catch {
+        btn.textContent = 'Не удалось';
+      }
+      setTimeout(() => (btn.innerHTML = `${I('copy', 12)} Копировать CSS`), 1500);
+    });
+  }
+
+  // «Переснять»: блок на странице изменился (раскрыли, дописали, поменялась высота) — снимаем тот же элемент
+  // или ту же область заново. Название, описание, критичность и картинки формы остаются.
+  async function retake() {
+    if (state.mode !== 'form' || state.retaking) return;
+    const el = state.selected;
+    const g = state.region;
+    if (el && !el.isConnected) {
+      showToast('Элемента больше нет на странице — выберите его заново кнопкой «Другой элемент»', { error: true });
+      return;
+    }
+    const formId = state.formSeq;
+    const btn = ui.panel.querySelector('[data-act=retake]');
+    state.retaking = true;
+    btn.disabled = true;
+    btn.innerHTML = `${I('camera', 14)} Снимаю…`;
+    try {
+      let shot;
+      if (el) {
+        shot = await shootElement(el);
+      } else {
+        // Область снимается как есть, без прокрутки: если её увели с экрана — возвращаем.
+        const vh = document.documentElement.clientHeight || window.innerHeight;
+        if (g.top < window.scrollY || g.top + g.height > window.scrollY + vh) window.scrollTo({ left: window.scrollX, top: Math.max(0, g.top - 20), behavior: 'instant' });
+        const left = g.left - window.scrollX, top = g.top - window.scrollY;
+        shot = await captureRegion({ left, top, width: g.width, height: g.height, right: left + g.width, bottom: top + g.height });
+        shot.note = 'Снимок области экрана';
+      }
+      if (state.formSeq !== formId || state.mode !== 'form') return;
+      state.shot = shot;
+      if (el) {
+        state.elementInfo = elementInfo(el);
+        state.styles = collectStyles(el);
+      }
+      renderShot();
+    } catch (err) {
+      if (state.formSeq === formId) showToast(`Не удалось переснять: ${err.message}`, { error: true });
+    } finally {
+      state.retaking = false;
+      if (btn.isConnected) {
+        btn.disabled = false;
+        btn.innerHTML = `${I('camera', 14)} Переснять`;
+      }
+    }
+  }
+
+  // ---------- Описание с Markdown и «Визуальные пояснения» ----------
+  // Редактор описания и обработка картинок — те же ES-модули, что на странице ревью. Контент-скрипт не модуль,
+  // поэтому подключает их через import() (файлы открыты сайтам в web_accessible_resources манифеста).
+  // Не загрузились — форма остаётся с обычным полем описания и без «Визуальных пояснений».
+
+  const DESC_PLACEHOLDER = 'Что не так, как должно быть, шаги воспроизведения';
+  let modules = null;
+
+  function loadModules() {
+    modules ||= (async () => {
+      const [editor, images, report] = await Promise.all([
+        import(chrome.runtime.getURL('pages/md-editor.js')),
+        import(chrome.runtime.getURL('lib/images.js')),
+        import(chrome.runtime.getURL('lib/report.js')),
+      ]);
+      return { ...editor, ...images, MD_CSS: report.MD_CSS };
+    })().catch((e) => {
+      console.warn('[Design Review] редактор описания не загрузился:', e?.message || e);
+      modules = null; // в следующий раз попробуем снова
+      return null;
+    });
+    return modules;
+  }
+
+  const formIsOpen = (formId) => state.mode === 'form' && state.formSeq === formId;
+
+  // Обычное поле описания → визуальный редактор с Markdown; показываем блок «Визуальные пояснения».
+  async function upgradeForm(formId) {
+    const m = await loadModules();
+    if (!formIsOpen(formId)) return;
+    if (!m) return showModulesHint();
+    if (!ui.root.querySelector('style[data-md-css]')) {
+      const style = document.createElement('style');
+      style.dataset.mdCss = '';
+      style.textContent = m.MD_CSS; // базовые отступы Markdown; цвета тёмной темы — в STYLES
+      ui.root.append(style);
+    }
+    const plain = ui.panel.querySelector('[data-desc] textarea[name=description]');
+    if (plain) {
+      const focused = ui.root.activeElement === plain;
+      plain.insertAdjacentHTML('afterend', m.editorHtml({ placeholder: DESC_PLACEHOLDER }));
+      const root = plain.nextElementSibling;
+      const value = plain.value; // успели что-то ввести до загрузки редактора — переносим
+      plain.remove();
+      state.editor = m.mountEditor(root, { value, askLink, rememberMode: false });
+      if (focused) state.editor.focus();
+    }
+    ui.panel.querySelector('[data-fix]').hidden = false;
+    renderFix();
+  }
+
+  // Редактор не загрузился — объясняем почему, а не молча оставляем обычное поле.
+  function showModulesHint() {
+    const field = ui.panel.querySelector('[data-desc]');
+    if (!field || field.querySelector('[data-desc-hint]')) return;
+    // Файлы контент-скрипта браузер берёт с диска при каждом внедрении, а манифест — только при перезагрузке
+    // расширения. Код уже новый, а манифест старый (без web_accessible_resources) — файлы редактора сайту закрыты.
+    let staleManifest = false;
+    try {
+      staleManifest = !chrome.runtime.getManifest().web_accessible_resources?.length;
+    } catch {}
+    const hint = document.createElement('div');
+    hint.className = 'hint desc-hint';
+    hint.dataset.descHint = '';
+    hint.innerHTML = `${I('warning', 12)}<span></span>`;
+    hint.querySelector('span').textContent = staleManifest
+      ? 'Редактор Markdown и «Визуальные пояснения» появятся после перезагрузки расширения: на странице расширений нажмите ↻ у Design Review Checker и обновите эту вкладку.'
+      : 'Редактор Markdown и «Визуальные пояснения» не загрузились на этом сайте. Описание можно оформить и добавить картинки позже, на странице ревью.';
+    field.append(hint);
+  }
+
+  function renderFix() {
+    const box = ui.panel.querySelector('[data-fix]');
+    if (!box || box.hidden) return;
+    const images = state.fixImages;
+    box.innerHTML = `
+      <div class="fix-head">
+        <span class="field-label">Визуальные пояснения</span>
+        ${images.length ? `<span class="fix-count">${images.length}</span>` : ''}
+        <span class="spacer"></span>
+        <button type="button" class="fix-add-btn" data-act="fix-add" title="Добавить картинки">${I('plus', 14)} Добавить</button>
+        <input type="file" accept="image/*" multiple hidden data-fix-input>
+      </div>
+      ${
+        images.length
+          ? `<div class="fix-body">${images
+              .map((_, k) => `<div class="fix-thumb" data-fix-index="${k}"><button type="button" class="fix-del" data-act="fix-del" title="Убрать картинку">${I('xmark', 12)}</button></div>`)
+              .join('')}<button type="button" class="fix-tile-add" data-act="fix-add" title="Добавить картинки">${I('plus', 18)}</button></div>`
+          : `<button type="button" class="fix-body fix-empty" data-act="fix-add">${I('camera', 20)}<b>Добавьте картинки</b><span>Перетащите сюда, вставьте из буфера (${PASTE_KEY}) или выберите файлы</span></button>`
+      }
+      <div class="fix-drop">${I('download', 18)} Отпустите, чтобы добавить</div>`;
+    // Превью — canvas, а не <img src="data:…">: картинки с data: может запретить CSP сайта.
+    box.querySelectorAll('[data-fix-index]').forEach((tile) => tile.prepend(images[Number(tile.dataset.fixIndex)].thumb));
+    const input = box.querySelector('[data-fix-input]');
+    box.querySelectorAll('[data-act=fix-add]').forEach((btn) => btn.addEventListener('click', () => input.click()));
+    input.addEventListener('change', () => {
+      const files = [...input.files];
+      input.value = '';
+      addFixFiles(files);
+    });
+    box.querySelectorAll('[data-act=fix-del]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        // Картинка ещё не сохранена — убираем без подтверждения.
+        state.fixImages.splice(Number(btn.closest('[data-fix-index]').dataset.fixIndex), 1);
+        renderFix();
+      }),
+    );
+  }
+
+  async function thumbOf(src) {
+    const canvas = document.createElement('canvas');
+    try {
+      const bmp = await createImageBitmap(dataUrlToBlob(src));
+      const k = Math.min(1, 320 / Math.max(bmp.width, bmp.height));
+      canvas.width = Math.max(1, Math.round(bmp.width * k));
+      canvas.height = Math.max(1, Math.round(bmp.height * k));
+      canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      bmp.close?.();
+    } catch {} // без превью картинка всё равно сохранится
+    return canvas;
+  }
+
+  async function addFixFiles(files) {
+    const formId = state.formSeq;
+    const m = await loadModules();
+    if (!m || !formIsOpen(formId) || ui.panel.querySelector('[data-fix]')?.hidden !== false) return;
+    const { added, failed, skipped } = await m.readImageFiles(files);
+    const thumbs = await Promise.all(added.map((img) => thumbOf(img.src)));
+    if (!formIsOpen(formId)) return;
+    added.forEach((img, k) => state.fixImages.push({ ...img, thumb: thumbs[k] }));
+    renderFix();
+    if (failed.length) showToast(`Не все картинки добавлены: ${failed.join('; ')}`, { error: true });
+    else if (!added.length && skipped) showToast('В «Визуальные пояснения» можно добавить только картинки: PNG, JPEG, WebP, GIF и другие', { error: true });
+  }
+
+  // Картинки можно бросить или вставить из буфера в любое место панели — они попадут в «Визуальные пояснения».
+  // Обработчики висят на самой панели: она живёт всё время, а содержимое пересоздаётся при каждом открытии формы.
+  function bindFixDrop(panel) {
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const fixBox = () => panel.querySelector('[data-fix]:not([hidden])');
+    let depth = 0; // dragenter/dragleave приходят и от вложенных элементов
+    const leave = () => {
+      depth = 0;
+      fixBox()?.classList.remove('drop');
+    };
+    panel.addEventListener('dragenter', (e) => {
+      if (state.mode !== 'form' || !hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      fixBox()?.classList.add('drop');
+    });
+    panel.addEventListener('dragover', (e) => {
+      if (state.mode !== 'form' || !hasFiles(e)) return;
+      e.preventDefault(); // иначе браузер откроет брошенную картинку вместо сайта и форма пропадёт
+      e.dataTransfer.dropEffect = fixBox() ? 'copy' : 'none';
+    });
+    panel.addEventListener('dragleave', () => {
+      if (--depth <= 0) leave();
+    });
+    panel.addEventListener('drop', (e) => {
+      if (state.mode !== 'form' || !hasFiles(e)) return;
+      e.preventDefault();
+      leave();
+      if (fixBox()) addFixFiles(e.dataTransfer.files);
+    });
+    panel.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (state.mode !== 'form' || !files.length || !fixBox()) return;
+      e.preventDefault(); // иначе картинка вставится в редактор описания
+      addFixFiles(files);
+    });
+  }
+
+  // Адрес ссылки для редактора описания: null — отмена, '' — убрать ссылку.
+  function askLink(current) {
+    state.linkDone?.(null);
+    return new Promise((resolve) => {
+      const box = document.createElement('form');
+      box.className = 'link-box';
+      box.noValidate = true;
+      box.innerHTML = `
+        <div class="link-head">${I('link', 14)} <span></span></div>
+        <input type="text" name="link-url" placeholder="https://…" autocomplete="off">
+        <span class="err" hidden>Нужен адрес вида https://…</span>
+        <div class="discard-note">Оставьте поле пустым, чтобы убрать ссылку.</div>
+        <div class="discard-actions">
+          <button type="button" class="btn-light" data-act="link-cancel">Отмена</button>
+          <button type="submit" class="btn-primary">Готово</button>
+        </div>`;
+      box.querySelector('.link-head span').textContent = current ? 'Изменить ссылку' : 'Добавить ссылку';
+      const input = box.querySelector('input');
+      input.value = current || '';
+      const done = (value) => {
+        box.remove();
+        state.linkDone = null;
+        resolve(value);
+      };
+      state.linkDone = done;
+      box.querySelector('[data-act=link-cancel]').addEventListener('click', () => done(null));
+      box.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (!input.value.trim()) return done('');
+        const link = normalizeUrl(input.value);
+        input.classList.toggle('invalid', !link.ok);
+        box.querySelector('.err').hidden = link.ok;
+        if (link.ok) done(link.url);
+        else input.focus();
+      });
+      ui.panel.append(box);
+      input.focus();
+      input.select();
+    });
   }
 
   // Закрытие формы: если что-то введено — предупреждение прямо в панели (системный confirm показал бы «Confirm action on <id>»).
   function requestClose() {
+    state.linkDone?.(null);
     if (!formHasInput()) return cancel();
     if (ui.panel.querySelector('.discard')) return;
     const box = document.createElement('div');
@@ -1197,7 +1568,7 @@
     box.innerHTML = `
       <div class="discard-head">${I('warning', 16)} Предупреждение</div>
       <div class="discard-q">Закрыть замечание без сохранения?</div>
-      <div class="discard-note">Введённые название, описание и ссылка не сохранятся.</div>
+      <div class="discard-note">Введённые название, описание, ссылка и картинки не сохранятся.</div>
       <div class="discard-actions">
         <button type="button" class="btn-light" data-act="stay">Остаться</button>
         <button type="button" class="btn-danger" data-act="discard">Закрыть без сохранения</button>
@@ -1214,13 +1585,16 @@
   }
 
   function closePanel() {
+    state.linkDone?.(null);
+    state.editor = null;
+    state.fixImages = [];
     if (!ui) return;
     ui.panel.hidden = true;
     ui.panel.innerHTML = '';
   }
 
   async function save() {
-    if (state.mode !== 'form') return;
+    if (state.mode !== 'form' || state.retaking) return;
     const p = ui.panel;
     const titleEl = p.querySelector('[name=title]');
     const mockupEl = p.querySelector('[name=mockup]');
@@ -1236,7 +1610,7 @@
 
     const issue = {
       title,
-      description: p.querySelector('[name=description]').value.trim(),
+      description: (state.editor ? state.editor.getValue() : p.querySelector('[name=description]').value).trim(),
       severity: state.severity,
       mockupUrl: link.url,
       screenshot: state.shot.dataUrl,
@@ -1244,6 +1618,7 @@
       screenshotTruncated: state.shot.truncated,
       screenshotNote: state.shot.note || '',
       styles: state.styles,
+      ...(state.fixImages.length ? { fixImages: state.fixImages.map(({ src, name }) => ({ src, name })) } : {}),
       page: { url: location.href, title: document.title },
       element: state.elementInfo,
       viewport: { width: window.innerWidth, height: window.innerHeight, dpr: window.devicePixelRatio },

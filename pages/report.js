@@ -1,5 +1,5 @@
 import { getReview, getActiveReview } from '../lib/store.js';
-import { REPORT_CSS, buildReportBody, buildReportDocument, reportFileName, installLightbox, lightboxIcons } from '../lib/report.js';
+import { REPORT_CSS, buildReportBody, buildReportDocument, reportFileName, installLightbox, installToc, lightboxIcons } from '../lib/report.js';
 import { icon } from '../lib/icons.js';
 import * as folder from '../lib/folder.js';
 
@@ -55,6 +55,7 @@ async function main() {
   document.getElementById('report-style').textContent = REPORT_CSS;
   document.getElementById('report').innerHTML = buildReportBody(review);
   installLightbox(document, lightboxIcons());
+  installToc(document);
 
   document.getElementById('btn-html').addEventListener('click', () => downloadHtml(review));
   document.getElementById('btn-pdf').addEventListener('click', printPdf);

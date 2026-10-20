@@ -5,6 +5,7 @@ import * as folder from '../lib/folder.js';
 import { normalizeUrl, safeHref } from '../lib/url.js';
 import { icon } from '../lib/icons.js';
 import { editorHtml, mountEditor } from './md-editor.js';
+import { readImageFiles } from '../lib/images.js';
 import { codeFingerprint, REOPEN_KEY } from '../lib/code-version.js';
 
 const main = document.getElementById('main');
@@ -129,7 +130,7 @@ window.addEventListener('resize', updateSideShades);
 
 // ---------- Окна подтверждения (вместо системных confirm/alert/prompt с заголовком «Confirm action on <id>») ----------
 
-// Возвращает Promise<{ ok, value }>. ok=true — нажата основная кнопка.
+// Возвращает Promise<{ ok, value, action }>. ok=true — нажата основная кнопка; action — 'ok' | 'cancel' | 'extra' | ''.
 function showDialog({
   label = 'Предупреждение',
   labelIcon = 'warning',
@@ -142,7 +143,7 @@ function showDialog({
   confirmIcon = '',
   confirmClass = 'btn-delete',
   cancelText = 'Отмена', // null — без кнопки отмены (информационное окно)
-  extra = null, // { text, icon, onClick }
+  extra = null, // { text, icon, onClick } или { text, icon, close: true } — закрыть окно с action 'extra'
 }) {
   const dlg = document.getElementById('danger');
   dlg.classList.toggle('info', labelIcon !== 'warning');
@@ -181,7 +182,7 @@ function showDialog({
   dlg.querySelector('button[value=ok] span').textContent = confirmText;
   if (extra) {
     dlg.querySelector('[data-act=extra] span').textContent = extra.text;
-    dlg.querySelector('[data-act=extra]').addEventListener('click', extra.onClick);
+    dlg.querySelector('[data-act=extra]').addEventListener('click', extra.close ? () => dlg.close('extra') : extra.onClick);
   }
   const field = dlg.querySelector('.danger-input');
   if (field) {
@@ -202,7 +203,7 @@ function showDialog({
     field.select();
   }
   return new Promise((resolve) =>
-    dlg.addEventListener('close', () => resolve({ ok: dlg.returnValue === 'ok', value: field?.value ?? '' }), { once: true }),
+    dlg.addEventListener('close', () => resolve({ ok: dlg.returnValue === 'ok', value: field?.value ?? '', action: dlg.returnValue }), { once: true }),
   );
 }
 
@@ -460,56 +461,12 @@ function fixBlockHtml(issue, k) {
 }
 
 const PASTE_KEY = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '') ? '⌘V' : 'Ctrl+V';
-const MAX_IMAGE_SIDE = 2400; // большие картинки уменьшаем: они хранятся в расширении и встраиваются в отчёт
-
-function readAsDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-// Файл → data URL PNG/JPEG (только такие отчёт встраивает). Другие форматы (WebP, GIF…) перерисовываем в PNG,
-// слишком большие — уменьшаем.
-async function imageFileToDataUrl(file) {
-  const src = await readAsDataUrl(file);
-  const native = /^data:image\/(png|jpeg);base64,/.test(src);
-  let bitmap;
-  try {
-    bitmap = await createImageBitmap(file);
-  } catch {
-    if (native) return src;
-    throw new Error(`не удалось прочитать картинку «${file.name || 'без имени'}»`);
-  }
-  const k = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
-  if (native && k === 1) {
-    bitmap.close?.();
-    return src;
-  }
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(bitmap.width * k));
-  canvas.height = Math.max(1, Math.round(bitmap.height * k));
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close?.();
-  return canvas.toDataURL(file.type === 'image/jpeg' ? 'image/jpeg' : 'image/png', 0.92);
-}
 
 async function addFixFiles(review, issue, files) {
-  const images = [...files].filter((f) => f.type.startsWith('image/'));
-  if (!images.length) {
-    if (files.length) await notify('Это не картинки', 'В блок «Визуальные пояснения» можно добавить PNG, JPEG, WebP, GIF и другие изображения.');
+  const { added, failed, skipped } = await readImageFiles(files);
+  if (!added.length && !failed.length) {
+    if (skipped) await notify('Это не картинки', 'В блок «Визуальные пояснения» можно добавить PNG, JPEG, WebP, GIF и другие изображения.');
     return;
-  }
-  const added = [];
-  const failed = [];
-  for (const file of images) {
-    try {
-      added.push({ src: await imageFileToDataUrl(file), name: file.name || '' });
-    } catch (e) {
-      failed.push(e.message);
-    }
   }
   if (added.length) await write(() => store.addFixImages(review.id, issue.id, added));
   render();
@@ -724,6 +681,50 @@ function restoredHtml() {
   return summary ? `<div class="folder-state ${warn ? 'warn' : 'ok'}">${escapeHtml(summary)}</div>` : '';
 }
 
+// Только из обработчика клика: браузер открывает выбор папки в ответ на действие пользователя.
+async function pickFolder() {
+  let dir;
+  try {
+    ({ dir } = await folder.pickResultsFolder());
+  } catch (e) {
+    if (e.name !== 'AbortError') await notify('Не удалось выбрать папку', e.message);
+    return;
+  }
+  await saveAllToFolder(dir, { restore: true });
+  renderFolder();
+}
+
+// Сверка с папкой: ревью, которые сохранялись в неё раньше, но их файлов там больше нет (папку очистили,
+// удалили или перенесли из неё ревью вручную). Без доступа к папке проверить нельзя — тогда молчим.
+async function checkMissing() {
+  const check = await folder.checkFolderContents().catch(() => null);
+  // Уже открыто другое окно (например, клик, вернувший доступ, был по «Удалить») — спросим при следующем открытии.
+  if (!check?.missing.length || document.getElementById('danger').open) return;
+  const { missing, found, folderGone, dirName } = check;
+  const n = missing.length;
+  const { action } = await showDialog({
+    label: 'Папка для результатов',
+    question: folderGone ? `Папки «${dirName}» больше нет` : found ? `В папке «${dirName}» нет ${n} ревью` : `Папка «${dirName}» пуста`,
+    alertTitle: `${n === 1 ? 'Это ревью сохранялось' : 'Эти ревью сохранялись'} в папку раньше, но ${folderGone ? 'папку удалили или переместили' : 'файлы удалили или переместили'}:`,
+    alertItems: missing.map((m) => `${m.title} — ${m.issueCount} зам.`),
+    note: 'Удаление из расширения необратимо: замечания, скриншоты и описания пропадут. Если ревью ещё нужны — сохраните их заново.',
+    confirmText: 'Удалить из расширения',
+    confirmIcon: 'trash',
+    cancelText: 'Решить позже',
+    extra: folderGone ? { text: 'Выбрать папку заново', icon: 'folderOpen', close: true } : { text: 'Сохранить заново', icon: 'save', close: true },
+  });
+  const ids = missing.map((m) => m.id);
+  if (action === 'ok') {
+    await folder.forgetMissing(ids);
+    if (ids.includes(currentId)) currentId = null;
+  } else if (action === 'extra') {
+    if (folderGone) await pickFolder();
+    else await folder.resaveMissing(ids);
+  } else return;
+  render();
+  renderFolder();
+}
+
 async function renderFolder() {
   const dir = await folder.getDir();
   const { [folder.KEY_FOLDER_STATUS]: status = {} } = await chrome.storage.local.get(folder.KEY_FOLDER_STATUS);
@@ -756,17 +757,7 @@ async function renderFolder() {
   folderEl.classList.toggle('attention', !dir || perm !== 'granted');
   updateSideShades();
 
-  folderEl.querySelector('[data-act=pick]')?.addEventListener('click', async () => {
-    let dir;
-    try {
-      ({ dir } = await folder.pickResultsFolder());
-    } catch (e) {
-      if (e.name !== 'AbortError') await notify('Не удалось выбрать папку', e.message);
-      return;
-    }
-    await saveAllToFolder(dir, { restore: true });
-    renderFolder();
-  });
+  folderEl.querySelector('[data-act=pick]')?.addEventListener('click', pickFolder);
   folderEl.querySelector('[data-act=disconnect]')?.addEventListener('click', async () => {
     const name = folder.folderLabel(dir, status);
     const { ok } = await showDialog({
@@ -794,13 +785,16 @@ async function renderFolder() {
 chrome.storage.onChanged.addListener((changes, area) => area === 'local' && folder.KEY_FOLDER_STATUS in changes && renderFolder());
 // Дописываем изменения, сделанные без открытой страницы (например, замечания с сайта). Если доступа нет —
 // просим его при первом клике на странице: с «Разрешать всегда» браузер отдаёт его молча.
+// Затем сверяемся с папкой: вдруг её очистили вручную, а ревью в расширении остались.
 folder.flushUnsaved().finally(async () => {
   renderFolder();
+  checkMissing();
   const dir = await folder.getDir();
   if (dir && (await folder.permission(dir).catch(() => 'prompt')) === 'prompt') {
     folder.regainAccessOnClick(document, dir, { ignore: '#folder, #danger' }).then((result) => {
       regainResult = result.state === 'granted' ? null : result;
       renderFolder();
+      if (result.state === 'granted') checkMissing();
     });
   }
 });

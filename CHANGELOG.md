@@ -3,6 +3,26 @@
 Все заметные изменения расширения. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/).
 Разделы собирает `npm run changelog-prepend` из сообщений коммитов; после сборки их можно поправить руками.
 
+## [1.1.0] — 2026-10-20
+
+### Новое
+
+- Навигация по замечаниям в HTML-отчёте ([1fbae2a](https://github.com/allakin/Design-review-checker/commit/1fbae2a1a6c60fe5e221e4ec6c5c0e4f1412d03c))
+- Сверять ревью с папкой reviews-results при открытии ([f329b11](https://github.com/allakin/Design-review-checker/commit/f329b11b916d4be6c8dcf603f4a70ecf312bc139))
+
+### Исправления
+
+- Минимальный размер шрифта в отчёте — 14px ([954b633](https://github.com/allakin/Design-review-checker/commit/954b633bfb206edd4f94b6c5804bc4b29479ee58))
+
+### Изменения
+
+- Обновил логику работы badges ([79deddc](https://github.com/allakin/Design-review-checker/commit/79deddc33cd6218d19fabce9c0034db41e0e3f52))
+- Обновил badges по тестам ([76b5139](https://github.com/allakin/Design-review-checker/commit/76b5139bb1fc4ba29835316560af3e9949602492))
+
+### Служебное
+
+- Поднимать версию и собирать черновик релиза автоматически ([22697b4](https://github.com/allakin/Design-review-checker/commit/22697b4fed62789cef4a03df887d432f3ddc38b4))
+
 ## [1.0.0] — 2026-10-19
 
 ### Новое

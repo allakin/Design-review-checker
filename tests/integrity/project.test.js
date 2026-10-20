@@ -173,6 +173,22 @@ describe('скрипты и страницы', () => {
     files.forEach((f) => assert.ok(exists(f), f));
   });
 
+  test('модули, которые контент-скрипт грузит через import(), и всё, что они импортируют, открыты в web_accessible_resources', () => {
+    const open = new Set(manifest.web_accessible_resources.flatMap((r) => r.resources));
+    const entries = [...read('content/content.js').matchAll(/import\(chrome\.runtime\.getURL\('([^']+)'\)\)/g)].map((m) => m[1]);
+    assert.ok(entries.length >= 3);
+    const seen = new Set();
+    const visit = (f) => {
+      if (seen.has(f)) return;
+      seen.add(f);
+      assert.ok(exists(f), f);
+      assert.ok(open.has(f), `${f} нет в web_accessible_resources`);
+      for (const m of read(f).matchAll(/^import [^;]+? from '([^']+)'/gm)) visit(fileURLToPath(new URL(m[1], path(f))).slice(fileURLToPath(ROOT).length));
+    };
+    entries.forEach(visit);
+    assert.deepEqual([...open].filter((f) => !seen.has(f)), [], 'лишние файлы открыты сайтам');
+  });
+
   test('страницы, которые открывает код, существуют', () => {
     for (const f of jsFiles) {
       for (const [, page] of read(f).matchAll(/'(pages\/[\w-]+\.html)/g)) assert.ok(exists(page), `${f}: ${page}`);

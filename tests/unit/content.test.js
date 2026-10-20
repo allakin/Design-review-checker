@@ -1,6 +1,7 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadContent, closeAllContent, CONTENT_SRC } from '../helpers/content.js';
+import { PNG } from '../helpers/env.js';
 
 after(closeAllContent);
 
@@ -772,6 +773,318 @@ describe('скриншот, форма и сохранение замечани�
     await env.sleep(10);
     const issue = env.chrome.runtime.sendMessage.mock.calls.find((c) => c.arguments[0].type === 'drc:saveIssue').arguments[0].issue;
     assert.match(issue.screenshotNote, /нативный выпадающий список рисует система/);
+  });
+});
+
+describe('форма на сайте: описание с Markdown и «Визуальные пояснения»', () => {
+  // Подмена модулей, которые контент-скрипт грузит через import(): настоящий редактор проверяют тесты страницы ревью,
+  // здесь — как форма с ним и с картинками работает.
+  // gate — промис, до которого модули «грузятся».
+  function fakeModules(gate) {
+    const editors = [];
+    const modules = (url) => (gate ? gate.then(() => load(url)) : load(url));
+    const load = (url) => {
+      if (url === 'chrome-extension://test-extension-id/pages/md-editor.js')
+        return {
+          editorHtml: ({ placeholder }) => `<div class="md-ed" data-md><div class="md-visual" contenteditable="true" data-placeholder="${placeholder}"></div></div>`,
+          mountEditor: (root, opts) => {
+            const ed = { root, opts, value: opts.value, keys: [], focused: false, getValue: () => ed.value, focus: () => (ed.focused = true), handleKeydown: (e) => ed.keys.push(e.key) };
+            editors.push(ed);
+            return ed;
+          },
+        };
+      if (url === 'chrome-extension://test-extension-id/lib/images.js')
+        return {
+          readImageFiles: async (files) => {
+            const images = [...files].filter((f) => f.type.startsWith('image/'));
+            return { added: images.map((f) => ({ src: PNG, name: f.name })), failed: [], skipped: files.length - images.length };
+          },
+        };
+      if (url === 'chrome-extension://test-extension-id/lib/report.js') return { MD_CSS: '.md p { margin: 0 }' };
+    };
+    return { modules, editors };
+  }
+
+  async function formWith({ loaded = true, gate, manifest } = {}) {
+    const fake = fakeModules(gate);
+    const env = loadContent(loaded ? { modules: fake.modules } : {});
+    if (manifest) env.chrome.runtime.getManifest = () => manifest;
+    await env.send({ type: 'drc:start', review: { id: 'rev-1', title: 'Ревью' } });
+    const el = env.document.getElementById('buy');
+    env.pointAt(el);
+    env.fire(el, 'click');
+    await env.sleep(250);
+    return { ...env, ...fake, editor: fake.editors.at(-1) };
+  }
+  const file = (env, name, type = 'image/png') => new env.window.File(['x'], name, { type });
+  const withData = (env, type, key, data) => {
+    const ev = new env.window.Event(type, { bubbles: true, cancelable: true, composed: true });
+    Object.defineProperty(ev, key, { value: data });
+    return ev;
+  };
+  const paste = (env, target, files) => {
+    const ev = withData(env, 'paste', 'clipboardData', { files, getData: () => '' });
+    target.dispatchEvent(ev);
+    return ev;
+  };
+  const savedIssue = async (env) => {
+    env.$('[name=title]').value = 'Карточки';
+    env.$('[data-act=save]').click();
+    await env.sleep(10);
+    return env.chrome.runtime.sendMessage.mock.calls.find((c) => c.arguments[0].type === 'drc:saveIssue').arguments[0].issue;
+  };
+
+  test('модули не загрузились — обычное поле описания, без «Визуальных пояснений»', async () => {
+    const env = await formWith({ loaded: false });
+    assert.equal(env.api.state.mode, 'form');
+    assert.ok(env.$('[data-desc] textarea[name=description]'));
+    assert.equal(env.$('[data-fix]').hidden, true);
+    env.$('[name=description]').value = 'Текст';
+    assert.equal((await savedIssue(env)).description, 'Текст');
+  });
+
+  test('модули не загрузились — подсказка в форме: при старом манифесте — перезагрузить расширение', async () => {
+    const stale = await formWith({ loaded: false, manifest: {} });
+    assert.match(stale.$('[data-desc-hint]').textContent, /после перезагрузки расширения/);
+
+    const blocked = loadContent({ modules: null });
+    blocked.chrome.runtime.getManifest = () => ({ web_accessible_resources: [{ resources: ['pages/md-editor.js'] }] });
+    await blocked.send({ type: 'drc:start', review: { id: 'rev-1', title: 'Ревью' } });
+    blocked.pointAt(blocked.document.getElementById('buy'));
+    blocked.fire(blocked.document.getElementById('buy'), 'click');
+    await blocked.sleep(250);
+    assert.match(blocked.$('[data-desc-hint]').textContent, /не загрузились на этом сайте.*на странице ревью/);
+  });
+
+  test('поле описания становится редактором Markdown; введённое до загрузки переносится', async () => {
+    const env = await formWith();
+    assert.equal(env.$('[data-desc] textarea[name=description]'), null);
+    assert.ok(env.$('[data-desc] .md-ed .md-visual'));
+    assert.equal(env.$('.md-visual').dataset.placeholder, 'Что не так, как должно быть, шаги воспроизведения');
+    assert.equal(env.editor.opts.rememberMode, false, 'режим не пишется в localStorage сайта');
+    assert.equal(typeof env.editor.opts.askLink, 'function');
+    assert.equal(env.shadow().querySelectorAll('style[data-md-css]').length, 1);
+    // «Описание» — не <label>: клик по пустому месту редактора иначе нажал бы кнопку его панели
+    assert.equal(env.$('[data-desc]').tagName, 'DIV');
+
+    let release;
+    const slow = await formWith({ gate: new Promise((r) => (release = r)) });
+    assert.ok(slow.$('[data-desc] textarea[name=description]'), 'пока модули грузятся — обычное поле');
+    slow.$('[name=description]').value = 'набрано рано';
+    slow.$('[name=description]').focus();
+    release();
+    await slow.sleep(10);
+    assert.equal(slow.editors.at(-1).opts.value, 'набрано рано');
+    assert.equal(slow.editors.at(-1).focused, true, 'фокус переходит в редактор');
+  });
+
+  test('описание из редактора уходит в замечание как Markdown', async () => {
+    const env = await formWith();
+    env.editor.value = '  **Важно**\n\n- отступ 16px  ';
+    const issue = await savedIssue(env);
+    assert.equal(issue.description, '**Важно**\n\n- отступ 16px');
+    assert.equal(issue.fixImages, undefined, 'без картинок поле не добавляется');
+  });
+
+  test('нажатия в форме передаются редактору, но не сайту; Esc и ⌘/Ctrl+Enter — форме', async () => {
+    const env = await formWith();
+    let siteGot = 0;
+    env.document.addEventListener('keydown', () => siteGot++);
+    env.fire(env.$('.md-visual'), 'keydown', { key: 'Enter' });
+    env.fire(env.$('.md-visual'), 'keydown', { key: 'k', metaKey: true });
+    assert.deepEqual(env.editor.keys, ['Enter', 'k']);
+    assert.equal(siteGot, 0);
+    env.editor.value = 'текст';
+    env.fire(env.$('.md-visual'), 'keydown', { key: 'Escape' });
+    assert.ok(env.$('.discard'), 'Esc — предупреждение о несохранённом');
+    assert.deepEqual(env.editor.keys, ['Enter', 'k']);
+  });
+
+  test('пустой блок «Визуальные пояснения» и добавление картинок вставкой, выбором файлов и перетаскиванием', async () => {
+    const env = await formWith();
+    const fix = env.$('[data-fix]');
+    assert.equal(fix.hidden, false);
+    assert.ok(fix.querySelector('.fix-empty[data-act=fix-add]'));
+    assert.match(fix.querySelector('.fix-empty').textContent, /Добавьте картинки.*Перетащите сюда, вставьте из буфера/s);
+
+    const ev = paste(env, env.$('[name=title]'), [file(env, 'a.png')]);
+    assert.ok(ev.defaultPrevented, 'картинка не вставляется в поле');
+    await env.sleep(10);
+    assert.equal(env.$('.fix-count').textContent, '1');
+    assert.equal(env.shadow().querySelectorAll('.fix-thumb canvas').length, 1, 'превью — canvas, не <img data:>');
+    assert.equal(env.shadow().querySelectorAll('.fix-thumb img').length, 0);
+    assert.ok(env.$('.fix-tile-add'));
+
+    const input = env.$('[data-fix-input]');
+    Object.defineProperty(input, 'files', { value: [file(env, 'b.jpg', 'image/jpeg')], configurable: true });
+    input.dispatchEvent(new env.window.Event('change'));
+    await env.sleep(10);
+
+    const over = withData(env, 'dragover', 'dataTransfer', { types: ['Files'], dropEffect: '' });
+    env.$('.md-visual').dispatchEvent(over);
+    assert.ok(over.defaultPrevented, 'браузер не откроет брошенный файл вместо сайта');
+    env.$('.md-visual').dispatchEvent(withData(env, 'drop', 'dataTransfer', { types: ['Files'], files: [file(env, 'c.png')] }));
+    await env.sleep(10);
+
+    assert.equal(env.$('.fix-count').textContent, '3');
+    assert.deepEqual(plain(env.api.state.fixImages.map((i) => i.name)), ['a.png', 'b.jpg', 'c.png']);
+  });
+
+  test('текст из буфера не перехватывается, не картинки — ошибка', async () => {
+    const env = await formWith();
+    const ev = paste(env, env.$('[name=title]'), []);
+    assert.equal(ev.defaultPrevented, false);
+    env.$('.md-visual').dispatchEvent(withData(env, 'drop', 'dataTransfer', { types: ['Files'], files: [file(env, 'doc.pdf', 'application/pdf')] }));
+    await env.sleep(10);
+    assert.equal(env.api.state.fixImages.length, 0);
+    assert.match(env.$('.toast').textContent, /можно добавить только картинки/);
+  });
+
+  test('картинку можно убрать; сохранённое замечание несёт картинки без превью', async () => {
+    const env = await formWith();
+    paste(env, env.$('[name=title]'), [file(env, '1.png'), file(env, '2.png')]);
+    await env.sleep(10);
+    env.$('[data-fix-index="0"] [data-act=fix-del]').click();
+    assert.equal(env.$('.fix-count').textContent, '1');
+    const issue = await savedIssue(env);
+    assert.deepEqual(plain(issue.fixImages), [{ src: PNG, name: '2.png' }]);
+  });
+
+  test('одни картинки без текста — закрытие с предупреждением; после закрытия форма пустая', async () => {
+    const env = await formWith();
+    paste(env, env.$('[name=title]'), [file(env, '1.png')]);
+    await env.sleep(10);
+    env.$('[data-act=cancel]').click();
+    assert.match(env.$('.discard-note').textContent, /картинки не сохранятся/);
+    env.$('[data-act=discard]').click();
+    assert.equal(env.api.state.mode, 'idle');
+    assert.equal(env.api.state.fixImages.length, 0);
+  });
+
+  test('запрос ссылки для редактора: готово, пусто, некорректно, Esc', async () => {
+    const env = await formWith();
+    const ask = env.editor.opts.askLink;
+
+    let result = ask('');
+    assert.equal(env.$('.link-box .link-head').textContent.trim(), 'Добавить ссылку');
+    env.$('.link-box input').value = 'figma.com/file/1';
+    env.$('.link-box').requestSubmit();
+    assert.equal(await result, 'https://figma.com/file/1');
+    assert.equal(env.$('.link-box'), null);
+
+    result = ask('https://a.ru/');
+    assert.equal(env.$('.link-box input').value, 'https://a.ru/');
+    env.$('.link-box input').value = 'не ссылка';
+    env.$('.link-box').requestSubmit();
+    assert.equal(env.$('.link-box .err').hidden, false);
+    env.$('.link-box input').value = '';
+    env.$('.link-box').requestSubmit();
+    assert.equal(await result, '');
+
+    result = ask('');
+    env.fire(env.$('.link-box input'), 'keydown', { key: 'Escape' });
+    assert.equal(await result, null);
+    assert.equal(env.api.state.mode, 'form', 'Esc закрыл только запрос ссылки');
+    assert.equal(env.$('.discard'), null);
+  });
+});
+
+describe('«Переснять» скриншот в форме', () => {
+  async function formFor(html) {
+    const env = loadContent(html ? { html } : {});
+    await env.send({ type: 'drc:start', review: { id: 'rev-1', title: 'Ревью' } });
+    const el = env.document.querySelector('#buy, #box');
+    env.pointAt(el);
+    env.fire(el, 'click');
+    await env.sleep(250);
+    return { ...env, el };
+  }
+  const captures = (env) => env.chrome.runtime.sendMessage.mock.calls.filter((c) => c.arguments[0].type === 'drc:capture').length;
+
+  test('снимает тот же элемент заново: новый размер, стили и превью; введённое остаётся', async () => {
+    const env = await formFor();
+    assert.equal(env.$('.shot-meta').textContent, 'button#buy.btn.primary · 120×40');
+    env.$('[name=title]').value = 'Высота блока';
+    env.$('[name=description]').value = 'Раскрыли список';
+    env.$('[data-sev=high]').click();
+    env.$('details.specs').open = true;
+    const before = captures(env);
+    const oldCanvas = env.$('.shot canvas');
+
+    env.setRect(env.el, { left: 10, top: 20, width: 120, height: 90 }); // блок на странице вырос
+    env.$('[data-act=retake]').click();
+    assert.equal(env.$('[data-act=retake]').disabled, true, 'пока снимает — кнопка недоступна');
+    await env.sleep(250);
+
+    assert.equal(captures(env), before + 1);
+    assert.notEqual(env.$('.shot canvas'), oldCanvas);
+    assert.equal(env.shadow().querySelectorAll('.shot canvas').length, 1);
+    assert.equal(env.$('.shot-meta').textContent, 'button#buy.btn.primary · 120×90');
+    assert.equal(env.$('[data-act=retake]').disabled, false);
+    assert.ok(env.$('details.specs').open, 'раскрытые стили остаются раскрытыми');
+    assert.match(env.$('.specs-body').textContent, /height\s*90px/);
+    assert.equal(env.$('[name=title]').value, 'Высота блока');
+    assert.equal(env.$('[name=description]').value, 'Раскрыли список');
+
+    env.$('[data-act=save]').click();
+    await env.sleep(10);
+    const issue = env.chrome.runtime.sendMessage.mock.calls.find((c) => c.arguments[0].type === 'drc:saveIssue').arguments[0].issue;
+    assert.equal(issue.element.height, 90);
+    assert.equal(issue.severity, 'high');
+    assert.equal(issue.styles.groups.find((g) => g.title === 'Размер').rows.find(([k]) => k === 'height')[1], '90px');
+  });
+
+  test('элемент пропал со страницы — ошибка, форма и старый скриншот остаются', async () => {
+    const env = await formFor();
+    const before = captures(env);
+    env.el.remove();
+    env.$('[data-act=retake]').click();
+    await env.sleep(10);
+    assert.equal(captures(env), before);
+    assert.match(env.$('.toast').textContent, /Элемента больше нет на странице/);
+    assert.equal(env.api.state.mode, 'form');
+    assert.ok(env.$('.shot canvas'));
+  });
+
+  test('ошибка снимка — уведомление, форма остаётся', async () => {
+    const env = await formFor();
+    env.chrome.runtime.sendMessage.mock.mockImplementation(async () => ({ ok: false, error: 'нет доступа к вкладке' }));
+    env.$('[data-act=retake]').click();
+    await env.sleep(250);
+    assert.match(env.$('.toast').textContent, /Не удалось переснять: нет доступа к вкладке/);
+    assert.equal(env.api.state.mode, 'form');
+    assert.equal(env.$('[data-act=retake]').disabled, false);
+  });
+
+  test('пока переснимает — сохранить нельзя', async () => {
+    const env = await formFor();
+    env.$('[name=title]').value = 'x';
+    env.$('[data-act=retake]').click();
+    env.$('[data-act=save]').click();
+    await env.sleep(5);
+    assert.ok(!env.chrome.runtime.sendMessage.mock.calls.some((c) => c.arguments[0].type === 'drc:saveIssue'));
+    await env.sleep(250);
+    env.$('[data-act=save]').click();
+    await env.sleep(10);
+    assert.ok(env.chrome.runtime.sendMessage.mock.calls.some((c) => c.arguments[0].type === 'drc:saveIssue'));
+  });
+
+  test('область переснимается той же рамкой', async () => {
+    const env = loadContent();
+    await env.send({ type: 'drc:start', review: { id: 'r', title: 'R' } });
+    const target = env.document.getElementById('buy');
+    env.pointAt(target);
+    env.fire(target, 'pointerdown', { button: 0, clientX: 10, clientY: 10 });
+    env.fire(target, 'pointermove', { clientX: 210, clientY: 110 });
+    env.fire(target, 'pointerup', { clientX: 210, clientY: 110 });
+    await env.sleep(250);
+    const before = env.draws.length;
+    env.$('[data-act=retake]').click();
+    await env.sleep(250);
+    const [, sx, sy, w, h] = env.draws.at(-1);
+    assert.equal(env.draws.length, before + 1);
+    assert.deepEqual([sx, sy, w, h], [20, 20, 400, 200]);
+    assert.equal(env.$('.shot-meta').textContent, 'Область 200×100');
   });
 });
 

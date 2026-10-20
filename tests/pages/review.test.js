@@ -6,6 +6,7 @@ import { makeIssue, PNG } from '../helpers/env.js';
 import { readFileSync } from 'node:fs';
 import * as store from '../../lib/store.js';
 import * as folder from '../../lib/folder.js';
+import { editorHtml, mountEditor } from '../../pages/md-editor.js';
 
 after(closePage);
 
@@ -375,6 +376,61 @@ describe('удаление ревью', () => {
   });
 });
 
+describe('сверка с папкой при открытии', () => {
+  // Все ревью сохранены в папку, затем папку очистили вручную.
+  async function cleared() {
+    const ctx = {};
+    const page = await loadPage('pages/review', {
+      setup: async () => {
+        ctx.root = await connectFolder(MemDir);
+        ctx.alpha = await store.createReview({ title: 'Альфа' });
+        await sleep(3);
+        ctx.beta = await store.createReview({ title: 'Бета' });
+        await folder.flushUnsaved();
+        ctx.root.children.clear();
+      },
+    });
+    return { ...page, ...ctx };
+  }
+
+  test('папку очистили — окно со списком пропавших ревью', async () => {
+    const page = await cleared();
+    assert.equal(page.$('#danger').open, true);
+    assert.equal(page.$('.danger-q').textContent, 'Папка «reviews-results» пуста');
+    assert.deepEqual(page.$$('.danger-alert li').map((li) => li.textContent).sort(), ['Альфа — 0 зам.', 'Бета — 0 зам.']);
+  });
+
+  test('«Удалить из расширения» — ревью удаляются, страница показывает пустое состояние', async () => {
+    const page = await cleared();
+    page.$('#danger button[value=ok]').click();
+    await sleep(60);
+    assert.deepEqual(await store.listReviews(), []);
+    assert.match(page.$('#main .empty').textContent, /Ревью не выбрано/);
+    assert.match(page.$('#review-list').textContent, /Ревью пока нет/);
+  });
+
+  test('«Сохранить заново» — ревью снова в папке', async () => {
+    const page = await cleared();
+    page.$('#danger [data-act=extra]').click();
+    await sleep(80);
+    assert.equal(page.root.list().length, 2);
+    assert.equal((await store.listReviews()).length, 2);
+  });
+
+  test('«Решить позже» — ничего не меняется', async () => {
+    const page = await cleared();
+    page.$('#danger button[value=cancel]').click();
+    await sleep(40);
+    assert.equal((await store.listReviews()).length, 2);
+    assert.deepEqual(page.root.list(), []);
+  });
+
+  test('папка на месте — окно не появляется', async () => {
+    const page = await seed();
+    assert.equal(page.$('#danger').open, false);
+  });
+});
+
 describe('папка для результатов', () => {
   test('не подключена — предупреждение и кнопка выбора; выбор сохраняет все ревью', async () => {
     const page = await seed({ withFolder: false });
@@ -682,6 +738,52 @@ describe('редактор описания (Markdown)', () => {
     assert.equal(ta.value, '- сделать **жирным**');
     await sleep(500);
     assert.equal((await store.getReview(page.alpha.id)).issues[0].description, '- сделать **жирным**');
+  });
+
+  // Так редактор работает в форме на сайте (content/content.js): localStorage там — хранилище сайта,
+  // а клавиатуру контент-скрипт перехватывает раньше редактора и передаёт через handleKeydown.
+  test('rememberMode: false — режим не читается и не пишется в localStorage', async () => {
+    const page = await alphaPage();
+    page.window.localStorage.setItem('drc-md-mode', 'source');
+    const box = page.document.createElement('div');
+    box.innerHTML = editorHtml({ placeholder: 'x' });
+    page.document.body.append(box);
+    const root = box.firstElementChild;
+    mountEditor(root, { value: 'a', rememberMode: false });
+    assert.equal(root.dataset.mode, 'visual');
+    root.querySelector('[data-cmd=mode]').click();
+    assert.equal(root.dataset.mode, 'source');
+    page.window.localStorage.removeItem('drc-md-mode');
+    root.querySelector('[data-cmd=mode]').click();
+    assert.equal(page.window.localStorage.getItem('drc-md-mode'), null);
+  });
+
+  test('handleKeydown: нажатие, перехваченное до редактора, обрабатывается только в визуальном поле', async () => {
+    const page = await alphaPage();
+    const box = page.document.createElement('div');
+    box.innerHTML = editorHtml({ placeholder: 'x' });
+    page.document.body.append(box);
+    const asked = [];
+    const editor = mountEditor(box.firstElementChild, { value: 'текст', rememberMode: false, askLink: async (url) => (asked.push(url), null) });
+    // Как контент-скрипт: перехват на window в фазе захвата, дальше событие не идёт.
+    const intercept = (e) => {
+      e.stopImmediatePropagation();
+      editor.handleKeydown(e);
+    };
+    page.window.addEventListener('keydown', intercept, true);
+    const press = (el) => el.dispatchEvent(new page.window.KeyboardEvent('keydown', { key: 'k', metaKey: true, ctrlKey: true, bubbles: true, cancelable: true }));
+    try {
+      const visual = box.querySelector('.md-visual');
+      visual.focus();
+      assert.equal(press(visual), false, '⌘/Ctrl+K в визуальном поле обработан');
+      await sleep(5);
+      assert.deepEqual(asked, ['']);
+      assert.equal(press(box.querySelector('.md-source')), true, 'в режиме разметки — не трогаем');
+      await sleep(5);
+      assert.equal(asked.length, 1);
+    } finally {
+      page.window.removeEventListener('keydown', intercept, true);
+    }
   });
 
   test('HTML в описании не исполняется', async () => {
