@@ -1123,3 +1123,216 @@ describe('снимок области', () => {
     assert.equal(env.api.state.mode, 'picking');
   });
 });
+
+describe('скриншот: прокрутка внутренним контейнером и «вся страница»', () => {
+  // Экран 1024×768 (jsdom), bitmap в 2 раза больше окна. jsdom не раскладывает шортхенд overflow в overflowY — пишем overflow-y.
+  // Раскладка админки: шапка 60, боковая панель 200, main { overflow: auto } 800×668 (+24 полоса прокрутки), подвал 40.
+  const APP = `<div id="app" style="height: 100%"><header>Шапка</header><aside>Меню</aside>
+    <main id="main" style="overflow-y: auto"><div id="stick" style="position: sticky">Заголовок</div><div id="blk">Контент</div></main>
+    <footer>Подвал</footer></div><div id="chat" style="position: fixed">Чат</div>`;
+  const CONTENT_H = 3000, MAIN_H = 668;
+
+  function setup({ html = APP, stuck = false, windowScroll = 0 } = {}) {
+    const env = loadContent({ html });
+    const { window, document } = env;
+    document.documentElement.style.height = document.body.style.height = '100%';
+    const def = (el, props) => {
+      for (const [k, v] of Object.entries(props)) Object.defineProperty(el, k, { value: v, configurable: true });
+    };
+    const rects = new Map();
+    window.Element.prototype.getBoundingClientRect = function () {
+      const r = rects.get(this)?.() || { left: 0, top: 0, width: 10, height: 10 };
+      return { x: r.left, y: r.top, ...r, right: r.left + r.width, bottom: r.top + r.height };
+    };
+    const screen = () => ({ left: 0, top: 0, width: 1024, height: 768 });
+    rects.set(document.documentElement, screen);
+    rects.set(document.body, screen);
+
+    // Окно: прокручивается, если windowScroll > 0 (тогда документ выше экрана на windowScroll).
+    let winY = 0;
+    const winCalls = [];
+    window.scrollTo = (o) => {
+      winCalls.push(o.top);
+      winY = Math.max(0, Math.min(windowScroll, o.top));
+    };
+    Object.defineProperty(window, 'scrollY', { get: () => winY, configurable: true });
+    def(document.documentElement, { scrollHeight: 768 + windowScroll });
+
+    const main = document.getElementById('main');
+    let top = 0;
+    if (main) {
+      rects.set(document.getElementById('app'), screen);
+      rects.set(main, () => ({ left: 200, top: 60, width: 824, height: MAIN_H }));
+      rects.set(document.getElementById('blk'), () => ({ left: 200, top: 60 - top, width: 800, height: CONTENT_H }));
+      def(main, { clientWidth: 800, clientHeight: MAIN_H, clientTop: 0, clientLeft: 0, scrollHeight: CONTENT_H });
+      Object.defineProperty(main, 'scrollTop', {
+        get: () => top,
+        set: (v) => {
+          if (!stuck) top = Math.max(0, Math.min(CONTENT_H - MAIN_H, v));
+        },
+        configurable: true,
+      });
+      main.style.scrollBehavior = 'smooth';
+    }
+
+    // Что видно в момент каждого кадра.
+    const frames = [];
+    env.chrome.runtime.sendMessage.mock.mockImplementation(async (msg) => {
+      if (msg.type === 'drc:capture') {
+        frames.push({
+          main: top,
+          win: winY,
+          chat: document.getElementById('chat')?.style.visibility || '',
+          stick: document.getElementById('stick')?.style.visibility || '',
+          behavior: main?.style.scrollBehavior,
+        });
+      }
+      return { ok: true, dataUrl: PNG };
+    });
+    const ctxs = [];
+    window.HTMLCanvasElement.prototype.getContext = function () {
+      const ctx = { canvas: this, draws: [], drawImage: (...a) => ctx.draws.push(a) };
+      ctxs.push(ctx);
+      return ctx;
+    };
+    env.api.ensureUi();
+    const shoot = (sel) => env.api.captureElement(document.querySelector(sel));
+    return { ...env, main, frames, ctxs, winCalls, shoot, scrollTop: () => top };
+  }
+
+  // Полосы, нарисованные в холст: [y, высота] в device-пикселях.
+  const rows = (ctx) => ctx.draws.map((a) => [a[6], a[8]]);
+
+  test('scrollsY: body при overflow: visible у html не прокручивается — прокручивается окно', () => {
+    const { api, document } = loadContent({ html: '<div id="box" style="overflow-y: auto">x</div><div id="vis">y</div>' });
+    const def = (el, sh, ch) => Object.defineProperties(el, { scrollHeight: { value: sh }, clientHeight: { value: ch } });
+    def(document.getElementById('box'), 500, 100);
+    def(document.getElementById('vis'), 500, 100);
+    def(document.body, 2000, 768);
+    document.body.style.overflowY = 'auto';
+    assert.equal(api.scrollsY(document.getElementById('box')), true);
+    assert.equal(api.scrollsY(document.getElementById('vis')), false, 'overflow: visible');
+    assert.equal(api.scrollsY(document.body), false);
+    document.documentElement.style.overflowY = 'hidden';
+    assert.equal(api.scrollsY(document.body), true);
+    assert.equal(api.scrollsY(document.documentElement), false);
+  });
+
+  test('scrollerOf, viewBoxOf, mainScrollerOf', () => {
+    const { api, main, document } = setup();
+    assert.equal(api.scrollerOf(document.getElementById('blk')), main);
+    assert.equal(api.scrollerOf(main), null);
+    assert.deepEqual(plain(api.viewBoxOf(null, 1024, 768)), { left: 0, top: 0, right: 1024, bottom: 768 });
+    // без полосы прокрутки и в пределах экрана
+    assert.deepEqual(plain(api.viewBoxOf(main, 1024, 700)), { left: 200, top: 60, right: 1000, bottom: 700 });
+    assert.equal(api.mainScrollerOf(document.body, 1024, 768), main);
+    assert.equal(api.pageScrollOf(document.body, 1024, 768).scroller, main);
+    assert.equal(api.pageScrollOf(document.getElementById('app'), 1024, 768).scroller, main);
+    assert.equal(api.pageScrollOf(main, 1024, 768), null);
+    assert.equal(api.pageScrollOf(document.getElementById('blk'), 1024, 768), null);
+  });
+
+  test('выбран сам прокручиваемый контейнер — снимается всё содержимое, а не видимая рамка', async () => {
+    const { shoot, frames, main, ctxs, winCalls } = setup();
+    main.scrollTop = 500;
+    const shot = await shoot('#main');
+    assert.equal(frames.length, Math.ceil(CONTENT_H / MAIN_H));
+    assert.deepEqual([shot.width, shot.height], [1600, CONTENT_H * 2]);
+    assert.equal(shot.truncated, false);
+    assert.equal(frames[0].main, 0, 'съёмка с начала содержимого');
+    assert.ok(frames.every((f) => f.behavior === 'auto'), 'scroll-behavior: auto на время съёмки');
+    // кадры встык и покрывают всю высоту
+    let y = 0;
+    for (const [dy, h] of rows(ctxs[0])) {
+      assert.ok(Math.abs(dy - y) < 1, `кадр с ${dy}, ожидали ${y}`);
+      y = dy + h;
+    }
+    assert.equal(Math.round(y), CONTENT_H * 2);
+    // прокрутка контейнера, окна и scroll-behavior восстановлены
+    assert.equal(main.scrollTop, 500);
+    assert.equal(main.style.scrollBehavior, 'smooth');
+    assert.ok(winCalls.every((t) => t === 0), 'окно не прокручивали');
+  });
+
+  test('блок внутри прокручиваемого контейнера склеивается прокруткой контейнера', async () => {
+    const { shoot, frames, scrollTop } = setup();
+    const shot = await shoot('#blk');
+    assert.equal(frames.length, Math.ceil(CONTENT_H / MAIN_H));
+    assert.equal(shot.height, CONTENT_H * 2);
+    assert.equal(shot.truncated, false);
+    assert.deepEqual(frames.map((f) => f.main).slice(0, 3), [0, MAIN_H, MAIN_H * 2]);
+    assert.equal(scrollTop(), 0);
+  });
+
+  test('контейнер не прокручивается дальше — «снят не целиком» вместо одного экрана без пометки', async () => {
+    const { shoot } = setup({ stuck: true });
+    const shot = await shoot('#blk');
+    assert.equal(shot.truncated, true);
+    assert.equal(shot.height, MAIN_H * 2);
+  });
+
+  for (const sel of ['body', '#app']) {
+    test(`«вся страница» (${sel}): шапка + весь контент main + подвал, панель продлена до низа`, async () => {
+      const { shoot, frames, ctxs, document } = setup();
+      const shot = await shoot(sel);
+      const extra = CONTENT_H - MAIN_H;
+      assert.deepEqual([shot.width, shot.height], [2048, (768 + extra) * 2]);
+      assert.equal(shot.truncated, false);
+      const ctx = ctxs[0];
+      assert.equal(ctx.imageSmoothingEnabled, false, 'без сглаживания растянутая строка не смешивается с соседней');
+      const [first, footer, side] = ctx.draws;
+      assert.deepEqual([first[2], first[4], first[6], first[8]], [0, 728 * 2, 0, 728 * 2], 'первый экран до низа main — как есть');
+      assert.deepEqual([footer[2], footer[6], footer[8]], [728 * 2, (728 + extra) * 2, 40 * 2], 'подвал — в самый низ');
+      assert.deepEqual([side[1], side[2], side[3], side[4], side[6], side[8]], [0, 728 * 2 - 1, 400, 1, 728 * 2, extra * 2], 'панель — растянутая строка');
+      // дальше из кадров берётся только область main, встык до подвала
+      const tail = ctx.draws.slice(3).filter((a) => a[3] !== 1 || a[1] === 400);
+      const frameRows = tail.filter((a) => a[1] === 400 && a[3] === 1600);
+      let y = 728 * 2;
+      for (const a of frameRows) {
+        assert.equal(a[6], y);
+        y = a[6] + a[8];
+      }
+      assert.equal(y, (728 + extra) * 2);
+      // fixed и sticky видны только в первом кадре, после съёмки возвращены
+      assert.equal(frames[0].chat, '');
+      assert.equal(frames[0].stick, '');
+      assert.ok(frames.slice(1).every((f) => f.chat === 'hidden' && f.stick === 'hidden'));
+      assert.equal(document.getElementById('chat').style.visibility, '');
+      assert.equal(document.getElementById('stick').style.visibility, '');
+    });
+  }
+
+  test('«вся страница»: прокрутка застряла — середина вырезана, подвал остаётся, пометка «снят не целиком»', async () => {
+    const { shoot } = setup({ stuck: true });
+    const shot = await shoot('body');
+    assert.equal(shot.truncated, true);
+    assert.equal(shot.height, 768 * 2);
+  });
+
+  test('«вся страница» при прокрутке окна (html, body { height: 100% }): fixed-шапка не дублируется', async () => {
+    const html = '<header id="chat" style="position: fixed">Шапка</header><div id="blk">Контент</div>';
+    const { shoot, frames, winCalls } = setup({ html, windowScroll: 1232 });
+    const shot = await shoot('body');
+    assert.deepEqual([shot.width, shot.height], [2048, 2000 * 2]);
+    assert.equal(shot.truncated, false);
+    assert.deepEqual(frames.map((f) => f.win), [0, 768, 1232]);
+    assert.deepEqual(frames.map((f) => f.chat), ['', 'hidden', 'hidden']);
+    assert.equal(winCalls.at(-1), 0, 'прокрутка окна восстановлена');
+  });
+
+  test('обычный блок на обычной странице склеивается прокруткой окна, как раньше', async () => {
+    const html = '<div id="blk">Контент</div>';
+    const env = setup({ html, windowScroll: 2000 });
+    const blk = env.document.getElementById('blk');
+    const getRect = env.window.Element.prototype.getBoundingClientRect;
+    env.window.Element.prototype.getBoundingClientRect = function () {
+      if (this !== blk) return getRect.call(this);
+      const top = 100 - env.window.scrollY;
+      return { left: 0, top, width: 500, height: 2000, right: 500, bottom: top + 2000 };
+    };
+    const shot = await env.shoot('#blk');
+    assert.equal(shot.height, 4000);
+    assert.equal(shot.truncated, false);
+    assert.equal(env.frames.length, Math.ceil(2000 / 768));
+  });
+});

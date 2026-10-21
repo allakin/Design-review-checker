@@ -15,7 +15,8 @@ const EXPORTS = [
   'effectiveBackground', 'textHost', 'contrastInfo', 'collectStyles', 'parseDeclarations', 'matchedDeclarations',
   'collectVariables', 'attributesOf', 'isDropdownSelect', 'openSelectList', 'cssPath', 'elementInfo', 'describe',
   'normalizeUrl', 'esc', 'swatches', 'contrastHtml', 'specsHtml', 'stylesAsCss', 'unionRect', 'dragRect', 'arrow',
-  'startPicking', 'select', 'save', 'reset', 'showToast',
+  'startPicking', 'select', 'save', 'reset', 'showToast', 'ensureUi', 'captureElement', 'scrollsY', 'scrollerOf', 'viewBoxOf',
+  'mainScrollerOf', 'pageScrollOf',
 ];
 
 export function instrumentedContentSource() {

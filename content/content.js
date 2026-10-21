@@ -616,11 +616,12 @@
   }
 
   // Фиксированные/липкие элементы (шапки, чаты, баннеры) перекрывают блок при прокрутке — прячем на время съёмки.
-  function hideOverlays(target) {
+  // Предки target остаются всегда, потомки — пока keepInside; target = null — прячем все.
+  function hideOverlays(target, { keepInside = true } = {}) {
     const hidden = [];
     const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_ELEMENT);
     for (let node = walker.currentNode; node; node = walker.nextNode()) {
-      if (node === host || node.contains(target) || target.contains(node)) continue;
+      if (node === host || (target && (node.contains(target) || (keepInside && target.contains(node))))) continue;
       const pos = getComputedStyle(node).position;
       if (pos === 'fixed' || pos === 'sticky') {
         hidden.push([node, node.style.getPropertyValue('visibility'), node.style.getPropertyPriority('visibility')]);
@@ -639,6 +640,70 @@
     const left = Math.min(a.left, b.left), top = Math.min(a.top, b.top);
     const right = Math.max(a.right, b.right), bottom = Math.max(a.bottom, b.bottom);
     return { left, top, right, bottom, width: right - left, height: bottom - top };
+  }
+
+  // ---------- Что прокручивает блок ----------
+
+  // Элемент прокручивается сам по вертикали. html — это окно; overflow у body при overflow: visible у html
+  // достаётся окну, сам body тогда не прокручивается.
+  function scrollsY(n) {
+    const html = document.documentElement;
+    if (n === html || (n === document.body && getComputedStyle(html).overflowY === 'visible')) return false;
+    return /^(auto|scroll|overlay)$/.test(getComputedStyle(n).overflowY) && n.scrollHeight > n.clientHeight + 1;
+  }
+
+  // Ближайший прокручиваемый предок или null (тогда прокручивается окно).
+  function scrollerOf(el) {
+    for (let n = el.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+      if (scrollsY(n)) return n;
+    }
+    return null;
+  }
+
+  // Видимая часть прокручиваемой области в координатах экрана, без рамок и полосы прокрутки.
+  function viewBoxOf(scroller, vw, vh) {
+    if (!scroller) return { left: 0, top: 0, right: vw, bottom: vh };
+    const b = scroller.getBoundingClientRect();
+    const left = b.left + scroller.clientLeft, top = b.top + scroller.clientTop;
+    return {
+      left: Math.max(0, left),
+      top: Math.max(0, top),
+      right: Math.min(vw, left + scroller.clientWidth),
+      bottom: Math.min(vh, top + scroller.clientHeight),
+    };
+  }
+
+  // Главный контейнер — прокручиваемый элемент внутри root (включая его) с наибольшей видимой площадью.
+  function mainScrollerOf(root, vw, vh) {
+    let best = null, bestArea = 0;
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    for (let n = w.currentNode; n; n = w.nextNode()) {
+      if (!scrollsY(n)) continue;
+      const b = viewBoxOf(n, vw, vh);
+      const area = Math.max(0, b.right - b.left) * Math.max(0, b.bottom - b.top);
+      if (area > bestArea) {
+        best = n;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+
+  // Режим «вся страница»: { scroller } (null — окно) или null, если это обычный блок.
+  // Включается для body/html и для обёртки размером с экран (#app с height: 100%), внутри которой листается контейнер.
+  function pageScrollOf(el, vw, vh) {
+    const html = document.documentElement;
+    const windowScrolls = (document.scrollingElement || html).scrollHeight > vh + 1;
+    if (el === html || el === document.body) {
+      if (windowScrolls) return { scroller: null };
+      const main = mainScrollerOf(document.body || html, vw, vh);
+      return main ? { scroller: main } : null;
+    }
+    if (windowScrolls || scrollsY(el)) return null;
+    const r = el.getBoundingClientRect();
+    if (r.left > 1 || r.top > 1 || r.right < vw - 1 || r.bottom < vh - 1) return null;
+    const main = mainScrollerOf(el, vw, vh);
+    return main ? { scroller: main } : null;
   }
 
   // Снимок прямоугольника экрана как есть: без прокрутки и без скрытия оверлеев (меню, попапы остаются).
@@ -672,6 +737,7 @@
     html.style.scrollBehavior = 'auto';
     host.style.display = 'none';
     let restoreOverlays = () => {};
+    let restoreScroller = () => {};
 
     try {
       const vw = html.clientWidth || window.innerWidth;
@@ -679,10 +745,36 @@
       let r = rectOf();
       if (r.width < 1 || r.height < 1) throw new Error('у элемента нулевой размер');
 
+      // Прокручиваем то, что реально листает блок: внутренний контейнер (админки, SPA) или окно.
+      const page = pageScrollOf(el, vw, vh);
+      const scroller = page ? page.scroller : scrollsY(el) ? el : scrollerOf(el);
+      if (scroller) {
+        // С smooth присваивание scrollTop анимируется, и кадр снимается посреди анимации.
+        const { scrollTop } = scroller;
+        const prev = scroller.style.scrollBehavior;
+        scroller.style.scrollBehavior = 'auto';
+        restoreScroller = () => {
+          scroller.scrollTop = scrollTop;
+          scroller.style.scrollBehavior = prev;
+        };
+      }
+      if (page) return await capturePage(scroller, vw, vh);
+
       restoreOverlays = hideOverlays(el);
 
-      // Блок помещается в экран — один снимок.
-      if (r.height <= vh) {
+      // Выбран сам прокручиваемый контейнер — снимаем всё его содержимое, а не рамку размером с экран.
+      const self = scroller === el;
+      const contentRect = self
+        ? () => {
+            const b = el.getBoundingClientRect();
+            const left = b.left + el.clientLeft, top = b.top + el.clientTop - el.scrollTop;
+            return { left, top, width: el.clientWidth, height: el.scrollHeight, right: left + el.clientWidth, bottom: top + el.scrollHeight };
+          }
+        : rectOf;
+      if (self) r = contentRect();
+
+      // Блок помещается в видимую область контейнера — один снимок.
+      if (r.height <= (scroller ? Math.min(vh, scroller.clientHeight) : vh)) {
         if (r.top < 0 || r.bottom > vh || r.left < 0 || r.right > vw) {
           el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
           // Снимаемая область может быть больше самого элемента (раскрытый список) — докручиваем.
@@ -705,42 +797,49 @@
         return finish(canvas, false);
       }
 
-      // Блок выше экрана — прокручиваем и склеиваем несколько снимков.
-      const docTop = r.top + window.scrollY;
+      // Блок выше видимой области — прокручиваем его контейнер и склеиваем несколько снимков.
+      const scrollBy = scroller
+        ? (dy) => (scroller.scrollTop += dy)
+        : (dy) => window.scrollTo({ left: window.scrollX, top: window.scrollY + dy, behavior: 'instant' });
+      const fullHeight = r.height;
       let canvas = null;
       let ctx = null;
       let scale = 1;
       let x0 = 0, x1 = 0;
       let captured = 0; // сколько CSS-пикселей блока уже снято
       let truncated = false;
-      let totalHeight = r.height;
+      let totalHeight = fullHeight;
 
       for (let i = 0; captured < totalHeight - 0.5; i++) {
         if (i >= MAX_SEGMENTS) {
           truncated = true;
           break;
         }
-        if (i === 0) el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
-        else window.scrollTo({ left: window.scrollX, top: docTop + captured, behavior: 'instant' });
+        if (i === 0) {
+          if (self) el.scrollTop = 0;
+          el.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+        } else scrollBy(contentRect().top + captured - viewBoxOf(scroller, vw, vh).top);
         await settle();
-        const cr = rectOf();
-        const visBottomLocal = Math.min(cr.bottom, vh) - cr.top; // нижняя видимая граница в координатах блока
+        const cr = contentRect();
+        // Кадр обрезаем по видимой области контейнера: закреплённая шапка и соседние панели не попадают в склейку.
+        const box = viewBoxOf(scroller, vw, vh);
+        const visBottomLocal = Math.min(cr.bottom, box.bottom) - cr.top; // нижняя видимая граница в координатах блока
         if (visBottomLocal <= captured + 0.5) {
-          truncated = true; // страница не прокручивается дальше (блок во внутреннем скролл-контейнере)
+          truncated = true; // прокрутка не сдвинула блок
           break;
         }
         const bmp = await grab();
         if (!canvas) {
           scale = bmp.width / window.innerWidth;
-          x0 = Math.max(0, cr.left);
-          x1 = Math.min(vw, cr.right);
+          x0 = Math.max(box.left, cr.left);
+          x1 = Math.min(box.right, cr.right);
           totalHeight = Math.min(cr.height, MAX_SHOT_PX / scale);
           canvas = document.createElement('canvas');
           canvas.width = Math.max(1, Math.round((x1 - x0) * scale));
           canvas.height = Math.max(1, Math.round(totalHeight * scale));
           ctx = canvas.getContext('2d');
         }
-        const fromLocal = Math.max(captured, -cr.top); // верхняя видимая граница
+        const fromLocal = Math.max(captured, box.top - cr.top); // верхняя видимая граница
         const toLocal = Math.min(visBottomLocal, totalHeight);
         const sy = (cr.top + fromLocal) * scale;
         const h = (toLocal - fromLocal) * scale;
@@ -757,12 +856,100 @@
         cut.getContext('2d').drawImage(canvas, 0, 0);
         canvas = cut;
       }
-      return finish(canvas, truncated || totalHeight < r.height);
+      return finish(canvas, truncated || totalHeight < fullHeight);
     } finally {
       restoreOverlays();
+      restoreScroller();
       window.scrollTo({ left: startX, top: startY, behavior: 'instant' });
       html.style.scrollBehavior = prevScrollBehavior;
       host.style.display = 'block';
+    }
+  }
+
+  // «Вся страница» (scroller = null — листается окно). Холст vw × (vh + extra): первый кадр целиком — шапка,
+  // боковые панели и подвал, дальше из каждого кадра берём только видимую область контейнера.
+  async function capturePage(scroller, vw, vh) {
+    const scrollTo = scroller
+      ? (y) => (scroller.scrollTop = y)
+      : (y) => window.scrollTo({ left: window.scrollX, top: y, behavior: 'instant' });
+    const scrolled = () => (scroller ? scroller.scrollTop : window.scrollY);
+    let restoreOverlays = () => {};
+    try {
+      scrollTo(0);
+      await settle();
+      const box = viewBoxOf(scroller, vw, vh);
+      const areaH = box.bottom - box.top;
+      if (box.right - box.left < 1 || areaH < 1) throw new Error('область прокрутки не видна');
+      // Высота берётся один раз: то, что подгрузится при прокрутке, не попадёт.
+      let extra = Math.max(0, scroller ? scroller.scrollHeight - scroller.clientHeight : (document.scrollingElement || document.documentElement).scrollHeight - vh);
+      const bmp = await grab();
+      const scale = bmp.width / window.innerWidth;
+      const px = (v) => Math.round(v * scale);
+      let truncated = false;
+      const maxExtra = Math.max(0, Math.floor(MAX_SHOT_PX / scale - vh));
+      if (extra > maxExtra) {
+        extra = maxExtra;
+        truncated = true;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = px(vw);
+      canvas.height = px(vh + extra);
+      const ctx = canvas.getContext('2d');
+      // Иначе растянутая строка пикселей смешивается с соседней, и боковая панель внизу окрашивается в цвет подвала.
+      ctx.imageSmoothingEnabled = false;
+      const W = canvas.width;
+      const bottom = px(box.bottom); // низ области в первом кадре
+      const ext = canvas.height - px(vh); // extra в device-пикселях
+      const footY = bottom + ext; // куда уезжает подвал
+      const left = px(box.left), right = px(box.right);
+      // Всё выше низа области вместе с её первым экраном — как есть.
+      ctx.drawImage(bmp, 0, 0, W, bottom, 0, 0, W, bottom);
+      // Всё ниже области (подвал) — в самый низ.
+      if (px(vh) > bottom) ctx.drawImage(bmp, 0, bottom, W, px(vh) - bottom, 0, footY, W, px(vh) - bottom);
+      // Боковые панели продлеваем последней строкой пикселей над низом области.
+      if (ext > 0) {
+        if (left > 0) ctx.drawImage(bmp, 0, bottom - 1, left, 1, 0, bottom, left, ext);
+        if (W > right) ctx.drawImage(bmp, right, bottom - 1, W - right, 1, right, bottom, W - right, ext);
+      }
+      bmp.close();
+
+      const total = areaH + extra; // высота содержимого области
+      let captured = areaH; // сколько CSS-пикселей содержимого уже снято
+      for (let i = 1; captured < total - 0.5; i++) {
+        if (i >= MAX_SEGMENTS) {
+          truncated = true;
+          break;
+        }
+        // Закреплённые шапки и липкие заголовки остаются только в первом кадре.
+        if (i === 1) restoreOverlays = hideOverlays(scroller, { keepInside: false });
+        scrollTo(captured);
+        await settle();
+        const at = scrolled();
+        const to = Math.min(at + areaH, total);
+        if (to <= captured + 0.5) {
+          truncated = true; // прокрутка не продвинулась
+          break;
+        }
+        const frame = await grab();
+        const y0 = px(box.top + captured), y1 = px(box.top + to);
+        ctx.drawImage(frame, left, px(box.top + captured - at), right - left, y1 - y0, left, y0, right - left, y1 - y0);
+        frame.close();
+        captured = to;
+      }
+      if (captured >= total - 0.5) return finish(canvas, truncated);
+
+      // Снято не всё — вырезаем неснятую середину, подвал придвигаем к снятому.
+      const keep = px(box.top + captured);
+      const cut = document.createElement('canvas');
+      cut.width = W;
+      cut.height = Math.max(1, keep + canvas.height - footY);
+      const c = cut.getContext('2d');
+      c.drawImage(canvas, 0, 0, W, keep, 0, 0, W, keep);
+      if (canvas.height > footY) c.drawImage(canvas, 0, footY, W, canvas.height - footY, 0, keep, W, canvas.height - footY);
+      return finish(cut, true);
+    } finally {
+      restoreOverlays();
     }
   }
 
