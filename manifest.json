@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Design Review Checker",
   "short_name": "Design Review",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Дизайн-ревью прямо в браузере: выделяете элемент, расширение делает его скриншот, вы описываете замечание и экспортируете отчёт в HTML или PDF.",
   "icons": {
     "16": "icons/icon16.png",

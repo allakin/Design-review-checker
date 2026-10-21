@@ -1,6 +1,6 @@
 {
   "name": "design-review-checker",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Design Review Checker — расширение браузера для дизайн-ревью вёрстки. Здесь — тесты и служебные скрипты.",
   "type": "module",
