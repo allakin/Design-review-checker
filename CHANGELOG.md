@@ -3,6 +3,17 @@
 Все заметные изменения расширения. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/).
 Разделы собирает `npm run changelog-prepend` из сообщений коммитов; после сборки их можно поправить руками.
 
+## [1.2.0] — 2026-10-22
+
+### Новое
+
+- Навигация по замечаниям на странице ревью ([2283320](https://github.com/allakin/Design-review-checker/commit/2283320a012e869aad662994a0e4f60b5ba8406e))
+
+### Исправления
+
+- Блок папки уезжал вверх при прокрутке страницы ревью ([9500e80](https://github.com/allakin/Design-review-checker/commit/9500e8030ab3f3390d9ad0b54d4a0fd1e339ce58))
+- Полностраничный скриншот снимал только один экран ([d05a50f](https://github.com/allakin/Design-review-checker/commit/d05a50f17827398a27f54f6fc46eafe5e3a142ab))
+
 ## [1.1.0] — 2026-10-20
 
 ### Новое

@@ -1,6 +1,6 @@
 import * as store from '../lib/store.js';
 import { SEVERITIES, severityOf } from '../lib/constants.js';
-import { escapeHtml, formatDate, specsHtml, SPECS_CSS, LIGHTBOX_CSS, MD_CSS, fixImagesOf, installLightbox, lightboxIcons } from '../lib/report.js';
+import { escapeHtml, formatDate, specsHtml, SPECS_CSS, LIGHTBOX_CSS, MD_CSS, fixImagesOf, installLightbox, lightboxIcons, navHtml, installToc } from '../lib/report.js';
 import * as folder from '../lib/folder.js';
 import { normalizeUrl, safeHref } from '../lib/url.js';
 import { icon } from '../lib/icons.js';
@@ -21,6 +21,7 @@ document.body.append(savedEl);
 let currentId = new URLSearchParams(location.search).get('id');
 let lastLocalWrite = 0;
 let savedTimer = 0;
+let disposeToc = null; // снимает обработчики навигации «В этом ревью» прошлой отрисовки
 
 function flashSaved() {
   savedEl.classList.add('show');
@@ -278,6 +279,8 @@ async function render() {
     return render();
   }
   const review = await store.getReview(currentId);
+  disposeToc?.();
+  disposeToc = null;
   if (!review) {
     main.innerHTML = `<div class="empty"><b>Ревью не выбрано</b>Создайте новое ревью или выберите его слева.</div>`;
     return;
@@ -291,7 +294,9 @@ async function render() {
   const counts = SEVERITIES.map((s) => ({ s, n: issues.filter((i) => severityOf(i.severity).id === s.id).length })).filter((x) => x.n);
 
   main.innerHTML = `
-    <div class="top">
+    <div class="rv-layout">
+    <div class="rv-body">
+    <div class="top" id="summary">
       <div class="fields">
         <input class="title-input" data-field="review-title" maxlength="200">
         <input class="author-input" data-field="review-author" maxlength="100" placeholder="Ревьюер">
@@ -320,9 +325,12 @@ async function render() {
     </div>
     ${
       issues.length
-        ? issues.map((i, k) => issueHtml(i, k, issues.length)).join('')
+        ? `<section id="issues">${issues.map((i, k) => issueHtml(i, k, issues.length)).join('')}</section>`
         : `<div class="empty"><b>Замечаний пока нет</b>Откройте сайт, нажмите на иконку расширения → «Выбрать элемент», наведите курсор на блок и кликните.</div>`
-    }`;
+    }
+    </div>
+    ${navHtml(issues, { title: 'В этом ревью:', label: 'Навигация по ревью', anchor: (i) => i.id })}
+    </div>`;
 
   const titleInput = main.querySelector('[data-field=review-title]');
   const authorInput = main.querySelector('[data-field=review-author]');
@@ -364,6 +372,7 @@ async function render() {
   });
 
   for (const card of main.querySelectorAll('[data-issue]')) bindIssue(card, review, issues.find((i) => i.id === card.dataset.issue));
+  disposeToc = installToc(document);
 
   if (focusKey) {
     const [issueId, field, s, e] = focusKey;
@@ -581,6 +590,9 @@ function bindIssue(card, review, issue) {
     write(() => store.updateIssue(review.id, issue.id, patch));
   }, 400);
   for (const name of ['title', 'mockupUrl']) f(name).addEventListener('input', save);
+  // Название в навигации «В этом ревью» меняется сразу, без перерисовки страницы
+  const navText = [...main.querySelectorAll('.r-nav a')].find((a) => a.getAttribute('href') === `#${issue.id}`)?.querySelector('.r-nav-text');
+  f('title').addEventListener('input', () => navText && (navText.textContent = f('title').value.trim() || 'Без названия'));
   const editor = mountEditor(card.querySelector('[data-md]'), { value: issue.description || '', onChange: save, askLink });
 
   card.querySelectorAll('[data-sev]').forEach((btn) =>
