@@ -562,6 +562,23 @@ describe('папка для результатов', () => {
     await sleep(40);
     assert.match(page.$('#folder .folder-state.err').textContent, /Ошибка записи: Нет места/);
   });
+
+  test('блок папки — последний в боковой панели, под растягивающимся списком ревью', async () => {
+    const page = await seed();
+    assert.equal(page.$('.side').lastElementChild, page.$('#folder'));
+    assert.equal(page.$('#folder').previousElementSibling, page.$('#list-wrap'));
+    const css = readFileSync(new URL('../../pages/review.css', import.meta.url), 'utf8');
+    assert.match(css, /\.side > \.list-wrap \{[^}]*flex: 1 1 auto;/);
+  });
+
+  test('боковая панель закреплена на всю высоту окна и не уезжает при прокрутке страницы', () => {
+    const css = readFileSync(new URL('../../pages/review.css', import.meta.url), 'utf8');
+    assert.match(css, /\.side \{[^}]*position: sticky; top: 0; height: 100vh;/);
+    // sticky не выходит за родителя: body высотой в один экран увёл бы панель (и блок папки) вверх после первого экрана
+    const body = css.match(/(?:^|\n)(?:html, )?body \{[^}]*\}/g).join('\n');
+    assert.doesNotMatch(body, /(?<!-)height: 100%/);
+    assert.match(body, /min-height: 100%/);
+  });
 });
 
 describe('навигация «В этом ревью»', () => {
