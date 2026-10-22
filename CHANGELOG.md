@@ -11,6 +11,7 @@
 
 ### Исправления
 
+- Блок папки уезжал вверх при прокрутке страницы ревью ([9500e80](https://github.com/allakin/Design-review-checker/commit/9500e8030ab3f3390d9ad0b54d4a0fd1e339ce58))
 - Полностраничный скриншот снимал только один экран ([d05a50f](https://github.com/allakin/Design-review-checker/commit/d05a50f17827398a27f54f6fc46eafe5e3a142ab))
 
 ## [1.1.0] — 2026-10-20
