@@ -12,6 +12,7 @@ import {
   lightboxIcons,
   installLightbox,
   installToc,
+  navHtml,
   REPORT_CSS,
   SPECS_CSS,
   LIGHTBOX_CSS,
@@ -192,6 +193,16 @@ describe('buildReportBody', () => {
     assert.equal(nav.querySelector('img'), null);
   });
 
+  test('навигация: свой заголовок и якоря (для страницы ревью), текст экранируется', () => {
+    const issues = [makeIssue({ id: 'a1', title: XSS })];
+    const doc = new JSDOM(navHtml(issues, { title: 'В этом ревью:', label: 'Навигация по ревью', anchor: (i) => i.id })).window.document;
+    assert.equal(doc.querySelector('.r-nav-title').textContent, 'В этом ревью:');
+    assert.equal(doc.querySelector('.r-nav').getAttribute('aria-label'), 'Навигация по ревью');
+    assert.deepEqual([...doc.querySelectorAll('a')].map((a) => a.getAttribute('href')), ['#summary', '#issues', '#a1']);
+    assert.equal(doc.querySelector('.r-nav-text').textContent, XSS);
+    assert.equal(doc.querySelector('img'), null);
+  });
+
   test('пустое ревью — без навигации', () => {
     assert.equal(bodyDoc(makeReview()).querySelector('.r-nav'), null);
   });
@@ -352,6 +363,23 @@ describe('installToc (навигация «В этом отчёте»)', () => {
     assert.deepEqual(active(), ['#issue-1']);
     assert.equal(before.getAttribute('aria-current'), null);
     dom.window.close();
+  });
+
+  test('dispose снимает все обработчики окна (страница ревью ставит навигацию при каждой перерисовке)', () => {
+    const review = makeReview({ issues: [makeIssue(), makeIssue()] });
+    const dom = new JSDOM(`<!doctype html><body>${buildReportBody(review)}</body>`, { pretendToBeVisual: true });
+    const win = dom.window;
+    const live = new Set();
+    const add = win.addEventListener.bind(win);
+    const remove = win.removeEventListener.bind(win);
+    const WATCHED = ['scroll', 'scrollend', 'resize']; // jsdom вешает на окно и свои служебные обработчики
+    win.addEventListener = (type, fn, opts) => (WATCHED.includes(type) && live.add(fn), add(type, fn, opts));
+    win.removeEventListener = (type, fn, opts) => (live.delete(fn), remove(type, fn, opts));
+    const dispose = installToc(win.document);
+    assert.ok(live.size > 0);
+    dispose();
+    assert.equal(live.size, 0);
+    win.close();
   });
 
   test('без навигации (пустое ревью) не падает', () => {

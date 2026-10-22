@@ -564,6 +564,55 @@ describe('папка для результатов', () => {
   });
 });
 
+describe('навигация «В этом ревью»', () => {
+  async function alphaPage() {
+    const page = await seed();
+    await openReview(page, page.alpha);
+    return page;
+  }
+  const card = (page, issue) => page.$(`[data-issue="${issue.id}"]`);
+
+  test('навигация «В этом ревью»: сводка и все замечания со ссылками на карточки', async () => {
+    const page = await alphaPage();
+    const nav = page.$('.rv-layout > nav.r-nav');
+    assert.ok(nav);
+    assert.equal(nav.querySelector('.r-nav-title').textContent, 'В этом ревью:');
+    const links = [...nav.querySelectorAll('a')];
+    assert.deepEqual(links.map((a) => a.getAttribute('href')), ['#summary', '#issues', `#${page.a1.id}`, `#${page.a2.id}`]);
+    for (const a of links) assert.ok(page.window.document.getElementById(a.getAttribute('href').slice(1)), a.getAttribute('href'));
+    assert.deepEqual(links.slice(2).map((a) => a.textContent), ['#1 Кнопка', '#2 Шапка']);
+    assert.equal(nav.querySelectorAll('a.active').length, 1);
+  });
+
+  test('навигация: клик подсвечивает пункт; порядок и названия следуют за замечаниями', async () => {
+    const page = await alphaPage();
+    const link = (issue) => [...page.$$('.r-nav a')].find((a) => a.getAttribute('href') === `#${issue.id}`);
+    link(page.a2).click();
+    assert.deepEqual(page.$$('.r-nav a.active').map((a) => a.getAttribute('href')), [`#${page.a2.id}`]);
+    page.input(card(page, page.a1).querySelector('[data-field=title]'), 'Кнопка «Купить»');
+    assert.equal(link(page.a1).textContent, '#1 Кнопка «Купить»');
+    page.input(card(page, page.a1).querySelector('[data-field=title]'), '  ');
+    assert.equal(link(page.a1).textContent, '#1 Без названия');
+    await sleep(500);
+    card(page, page.a2).querySelector('[data-act=up]').click();
+    await sleep(40);
+    assert.deepEqual(page.$$('.r-nav ul ul a').map((a) => a.textContent), ['#1 Шапка', '#2 Без названия']);
+  });
+
+  test('ревью без замечаний — без навигации', async () => {
+    const page = await seed();
+    assert.equal(page.$('.r-nav'), null);
+  });
+
+  test('навигация закреплена при прокрутке, на узком окне скрыта', () => {
+    const css = readFileSync(new URL('../../pages/review.css', import.meta.url), 'utf8');
+    assert.match(css, /\.r-nav-inner \{[^}]*position: sticky;/);
+    assert.match(css, /@media \(max-width: 1360px\) \{ \.r-nav \{ display: none; \} \}/);
+    // Прокручивающийся .main стал бы контейнером для sticky — и навигация уехала бы вместе со страницей
+    assert.doesNotMatch(css.match(/\.main \{[^}]*\}/)[0], /overflow: (auto|scroll|hidden)/);
+  });
+});
+
 describe('«Визуальные пояснения»', () => {
   async function alphaPage() {
     const page = await seed();
