@@ -72,6 +72,7 @@ describe('connectResultsFolder', () => {
 
   test('выбрана папка расширения — берётся/создаётся reviews-results внутри', async () => {
     const picked = new MemDir('Design review checker');
+    picked.put('manifest.json', '{}');
     const { dir, project } = await folder.connectResultsFolder(picked);
     assert.equal(dir.name, 'reviews-results');
     assert.equal(picked.at('reviews-results'), dir);
@@ -86,6 +87,15 @@ describe('connectResultsFolder', () => {
     assert.deepEqual(dir.list(), ['.gitkeep']);
   });
 
+  test('новая пустая папка с другим именем — своя папка для результатов, используется как есть', async () => {
+    const picked = new MemDir('Мои результаты');
+    const { dir, project } = await folder.connectResultsFolder(picked);
+    assert.equal(dir, picked);
+    assert.equal(project, '');
+    assert.deepEqual(picked.list(), [], 'reviews-results внутри не создаётся');
+    assert.equal(status().dirName, 'Мои результаты');
+  });
+
   test('папка с другим именем, где уже лежат ревью, используется как есть', async () => {
     const picked = new MemDir('Мои ревью');
     await folder.writeReview(picked, makeReview({ title: 'Старое' }));
@@ -98,10 +108,11 @@ describe('connectResultsFolder', () => {
 
   test('только чтение: в папке расширения без reviews-results ничего не создаётся', async () => {
     const picked = new MemDir('ext');
+    picked.put('manifest.json', '{}');
     const { dir, project } = await folder.connectResultsFolder(picked, { readOnly: true });
     assert.equal(dir, picked);
     assert.equal(project, '');
-    assert.deepEqual(picked.list(), []);
+    assert.deepEqual(picked.list(), ['manifest.json']);
   });
 
   test('только чтение: существующая reviews-results внутри подхватывается', async () => {
@@ -127,8 +138,9 @@ describe('connectResultsFolder', () => {
     let opts;
     globalThis.showDirectoryPicker = async (o) => ((opts = o), new MemDir('reviews-results'));
     try {
-      const { dir } = await folder.pickResultsFolder();
+      const { dir, picked } = await folder.pickResultsFolder();
       assert.equal(dir.name, 'reviews-results');
+      assert.equal(picked, dir, 'возвращает и выбранную папку');
       assert.deepEqual(opts, { id: 'drc-results', mode: 'readwrite' });
     } finally {
       delete globalThis.showDirectoryPicker;

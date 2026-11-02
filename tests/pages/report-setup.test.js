@@ -116,6 +116,7 @@ describe('страница первичной настройки', () => {
   test('выбор папки расширения подключает reviews-results внутри и сохраняет существующие ревью', async () => {
     const page = await loadPage('pages/setup', { setup: () => store.createReview({ title: 'Уже было' }) });
     const ext = new MemDir('Design review checker');
+    ext.put('manifest.json', '{}');
     globalThis.showDirectoryPicker = async () => ext;
     try {
       page.$('[data-act=pick]').click();
@@ -249,6 +250,88 @@ describe('страница первичной настройки', () => {
     }
     assert.match(page.$('.done h2').textContent, /Ревью восстановлены/);
     assert.equal((await store.getReview('o')).title, 'Нашлось');
+  });
+
+  test('первый запуск: своя новая пустая папка — результаты пишутся прямо в неё, без вложенной reviews-results', async () => {
+    const page = await loadPage('pages/setup', { setup: () => store.createReview({ title: 'Первое' }) });
+    const mine = new MemDir('Мои результаты');
+    globalThis.showDirectoryPicker = async () => mine;
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.match(page.$('.done h2').textContent, /Папка подключена/);
+    assert.equal(page.$('.path').textContent, 'Мои результаты/');
+    assert.equal(mine.has('reviews-results'), false);
+    assert.match(mine.list()[0], /^Первое — /);
+  });
+
+  test('режим восстановления: новая пустая папка — можно сразу сохранять результаты в неё', async () => {
+    const page = await loadPage('pages/setup', { query: '?restore=1', setup: () => store.createReview({ title: 'Первое' }) });
+    const mine = new MemDir('Мои результаты', { permission: 'prompt' });
+    globalThis.showDirectoryPicker = async () => mine;
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(120);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.match(page.$('.hint').textContent, /нет сохранённых ревью/);
+    assert.match(page.$('[data-act=use]').textContent, /Сохранять результаты сюда/);
+    assert.match(page.$('[data-act=pick]').textContent, /Выбрать другую папку/);
+    assert.equal(await folder.getDir(), undefined, 'папка только для чтения молча не подключается');
+    assert.equal(page.chrome.storage.local.data.get(folder.KEY_FOLDER_STATUS).state, 'no-folder');
+
+    page.$('[data-act=use]').click();
+    await sleep(150);
+    assert.equal(mine.permission, 'granted', 'запись запрошена по клику');
+    assert.equal(await folder.getDir(), mine);
+    assert.match(page.$('.done h2').textContent, /Папка подключена/);
+    assert.equal(page.$('.path').textContent, 'Мои результаты/');
+    assert.equal(page.$('.hint'), null);
+    assert.equal(page.$('h1').textContent, 'Подключите папку reviews-results');
+    assert.equal(page.$('.restore-intro').hidden, true);
+    assert.equal(mine.has('reviews-results'), false);
+    assert.match(mine.list()[0], /^Первое — /);
+    assert.deepEqual(await folder.unsavedReviews(), []);
+  });
+
+  test('режим восстановления: пустая папка расширения — «Сохранять сюда» подключает reviews-results внутри', async () => {
+    const page = await loadPage('pages/setup', { query: '?restore=1' });
+    const ext = new MemDir('Design review checker', { permission: 'prompt' });
+    ext.put('manifest.json', '{}');
+    globalThis.showDirectoryPicker = async () => ext;
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(120);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.deepEqual(ext.list(), ['manifest.json'], 'при чтении ничего не создаётся');
+    page.$('[data-act=use]').click();
+    await sleep(150);
+    assert.equal(page.$('.path').textContent, 'Design review checker/reviews-results/');
+    assert.equal((await folder.getDir()).name, 'reviews-results');
+  });
+
+  test('режим восстановления: браузер не дал запись — остаёмся на экране с подсказкой', async () => {
+    const page = await loadPage('pages/setup', { query: '?restore=1' });
+    const mine = new MemDir('Мои результаты', { permission: 'prompt', grantOnRequest: false });
+    globalThis.showDirectoryPicker = async () => mine;
+    try {
+      page.$('[data-act=pick]').click();
+      await sleep(120);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    page.$('[data-act=use]').click();
+    await sleep(120);
+    assert.match(page.$('.error').textContent, /Браузер не дал доступ на запись/);
+    assert.ok(page.$('[data-act=use]'));
+    assert.ok(page.$('[data-act=pick]'));
+    assert.equal(await folder.getDir(), undefined);
   });
 
   test('первый запуск: выбрана папка расширения, в её reviews-results лежат прошлые ревью — подтягиваются сразу', async () => {

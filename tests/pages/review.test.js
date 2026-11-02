@@ -438,6 +438,7 @@ describe('папка для результатов', () => {
     assert.ok(box.classList.contains('attention'));
     assert.match(box.textContent, /Не подключена/);
     const ext = new MemDir('Design review checker');
+    ext.put('manifest.json', '{}');
     globalThis.showDirectoryPicker = async () => ext;
     try {
       box.querySelector('[data-act=pick]').click();
@@ -466,9 +467,11 @@ describe('папка для результатов', () => {
     assert.match(page.$('#folder .folder-state.warn').textContent, /Восстановлено ревью из папки: 1\. Не удалось прочитать review\.json в папках: Битое\./);
   });
 
-  test('в выбранной папке нет сохранённых ревью — подсказка указать другую', async () => {
+  test('в выбранной папке нет сохранённых ревью — подсказка указать другую, пока туда ничего не записалось', async () => {
     const page = await seed({ withFolder: false });
-    globalThis.showDirectoryPicker = async () => new MemDir('reviews-results');
+    for (const r of [page.alpha, page.beta, page.gamma]) await store.deleteReview(r.id);
+    const picked = new MemDir('reviews-results');
+    globalThis.showDirectoryPicker = async () => picked;
     try {
       page.$('#folder [data-act=pick]').click();
       await sleep(150);
@@ -476,6 +479,28 @@ describe('папка для результатов', () => {
       delete globalThis.showDirectoryPicker;
     }
     assert.match(page.$('#folder').textContent, /нет сохранённых ревью.*«Сменить»/);
+
+    // Первое автосохранение записало ревью — подсказка устарела.
+    const review = await store.createReview({ title: 'Новое' });
+    await folder.writeReview(picked, review);
+    await folder.setStatus({ state: 'ok', lastSyncAt: Date.now() });
+    await sleep(100);
+    assert.doesNotMatch(page.$('#folder').textContent, /нет сохранённых ревью/);
+  });
+
+  test('пустая папка, в которую сразу записались ревью из расширения, — без подсказки «нет сохранённых ревью»', async () => {
+    const page = await seed({ withFolder: false });
+    const picked = new MemDir('reviews-results');
+    globalThis.showDirectoryPicker = async () => picked;
+    try {
+      page.$('#folder [data-act=pick]').click();
+      await sleep(150);
+    } finally {
+      delete globalThis.showDirectoryPicker;
+    }
+    assert.equal(picked.list('').length, 3);
+    assert.match(page.$('#folder').textContent, /Сохраняется автоматически/);
+    assert.doesNotMatch(page.$('#folder').textContent, /нет сохранённых ревью/);
   });
 
   test('отмена системного диалога выбора — без сообщений', async () => {

@@ -4,8 +4,9 @@ import { icon } from '../lib/icons.js';
 
 const stateEl = document.getElementById('state');
 let restored = null; // итог восстановления ревью из только что выбранной папки
+let restoredPicked = null; // папка, выбранная для восстановления: если ревью в ней нет, её можно подключить для результатов
 // ?restore=1 — пришли из popup по кнопке «Восстановить ревью из папки»: короткий экран, папка только для чтения.
-const restoreMode = new URLSearchParams(location.search).has('restore');
+let restoreMode = new URLSearchParams(location.search).has('restore');
 // ?grant=1 — пришли из popup по «разрешить»: браузер забыл доступ на запись, просим его по кнопке.
 let grantMode = new URLSearchParams(location.search).has('grant');
 let grantWritten = 0; // сколько ревью записал requestAccess — показываем в итоге
@@ -37,7 +38,9 @@ function bindClose() {
 }
 
 // Итог восстановления: коротко, что вернулось, и что запись нужно будет разрешить в окне расширения.
-function renderRestored() {
+// Ревью в папке нет (например, новый пользователь выбрал только что созданную папку) — предлагаем сохранять
+// результаты в неё или выбрать другую.
+function renderRestored(error = '') {
   const summary = folder.importSummary(restored);
   stateEl.innerHTML = restored.found
     ? `<div class="done">
@@ -46,10 +49,44 @@ function renderRestored() {
         <p>Осталось разрешить запись, чтобы новые замечания сохранялись в папку: в окне расширения нажмите «разрешить».</p>
         <div class="actions"><button class="btn btn-primary" data-act="close">Готово</button></div>
       </div>`
-    : `<div class="hint">В этой папке нет сохранённых ревью. Выберите папку, куда сохраняли результаты раньше.</div>
-       <button class="btn btn-primary btn-big" data-act="pick">${icon('folder', 18)} Выбрать другую папку</button>`;
-  if (summary && restored.found) stateEl.querySelector('.restored').textContent = summary;
+    : `<div class="hint">В этой папке нет сохранённых ревью. Если это новая папка для результатов — сохраняйте ревью в неё.
+         Если раньше вы сохраняли результаты в другом месте — выберите ту папку.</div>
+       ${summary ? '<p class="restored"></p>' : ''}
+       <div class="actions">
+         <button class="btn btn-primary" data-act="use">${icon('folder', 14)} Сохранять результаты сюда</button>
+         <button class="btn btn-light" data-act="pick">${icon('folderOpen', 14)} Выбрать другую папку</button>
+       </div>
+       ${error ? '<div class="error"></div>' : ''}`;
+  if (summary) stateEl.querySelector('.restored').textContent = summary;
+  if (error) stateEl.querySelector('.error').textContent = error;
   if (restored.found) bindClose();
+  stateEl.querySelector('[data-act=use]')?.addEventListener('click', useForResults);
+}
+
+// Папка из восстановления пуста — подключаем её для результатов. Открыта она только для чтения,
+// поэтому сначала просим запись (браузер покажет запрос — мы в обработчике клика).
+async function useForResults() {
+  try {
+    if ((await folder.permission(restoredPicked, true)) !== 'granted') {
+      return render('Браузер не дал доступ на запись. Нажмите ещё раз и разрешите сохранять изменения в папку.');
+    }
+    const { dir } = await folder.connectResultsFolder(restoredPicked);
+    try {
+      await folder.writeAll(dir, await store.getAllReviews());
+    } catch (e) {
+      await folder.setStatus({ state: 'error', error: e.message });
+    }
+  } catch (e) {
+    return render(`Не удалось подключить папку: ${e.message}`);
+  }
+  // Дальше — обычный экран «Папка подключена».
+  restoreMode = false;
+  restored = null;
+  restoredPicked = null;
+  document.querySelector('.step').textContent = intro.step;
+  document.querySelector('h1').textContent = intro.h1;
+  document.querySelector('.restore-intro').hidden = true;
+  render();
 }
 
 // Экран «разрешить запись»: одна кнопка, по клику браузер показывает запрос с «Разрешать всегда».
@@ -106,7 +143,7 @@ async function renderGrant(error = '') {
 async function render(error = '') {
   if (grantMode) return renderGrant(error);
   if (restoreMode && restored) {
-    renderRestored();
+    renderRestored(error);
   } else {
     const dir = restoreMode ? null : await folder.getDir();
     const { [folder.KEY_FOLDER_STATUS]: status = {} } = await chrome.storage.local.get(folder.KEY_FOLDER_STATUS);
@@ -144,8 +181,9 @@ async function render(error = '') {
 
 async function pick() {
   let dir;
+  let picked;
   try {
-    ({ dir } = await folder.pickResultsFolder({ readOnly: restoreMode }));
+    ({ dir, picked } = await folder.pickResultsFolder({ readOnly: restoreMode }));
   } catch (e) {
     if (e.name !== 'AbortError') render(`Не удалось ${restoreMode ? 'открыть' : 'подключить'} папку: ${e.message}`);
     return;
@@ -158,6 +196,12 @@ async function pick() {
   } catch (e) {
     if (restoreMode && !restored) return render(`Не удалось прочитать папку: ${e.message}`);
     await folder.setStatus({ state: 'error', error: e.message });
+  }
+  if (restoreMode && !restored.found) {
+    // Ревью нет — молча не подключаем папку, открытую только для чтения: решит пользователь
+    // («Сохранять результаты сюда» или «Выбрать другую папку»).
+    restoredPicked = picked;
+    await folder.disconnectFolder();
   }
   render();
 }
