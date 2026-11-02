@@ -741,6 +741,11 @@ async function renderFolder() {
   const dir = await folder.getDir();
   const { [folder.KEY_FOLDER_STATUS]: status = {} } = await chrome.storage.local.get(folder.KEY_FOLDER_STATUS);
   const perm = dir ? await folder.permission(dir).catch(() => 'prompt') : null;
+  // «В этой папке нет сохранённых ревью» — про момент выбора папки. Как только в неё записались ревью
+  // (сразу после выбора или позже автосохранением), предупреждение больше не верно.
+  if (restored && !restored.found && perm === 'granted' && (await folder.hasSavedReviews(dir).catch(() => false))) {
+    restored = null;
+  }
 
   let state;
   let buttons;
