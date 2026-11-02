@@ -3,6 +3,16 @@
 Все заметные изменения расширения. Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии — [SemVer](https://semver.org/lang/ru/).
 Разделы собирает `npm run changelog-prepend` из сообщений коммитов; после сборки их можно поправить руками.
 
+## [1.2.1] — 2026-11-02
+
+### Исправления
+
+- Новая пустая папка не подключалась для сохранения результатов ([587ecff](https://github.com/allakin/Design-review-checker/commit/587ecff5d10b630fb04ea7b02521f9738b82b31f))
+
+### Служебное
+
+- Черновик релиза нацелен на main, плашка release ведёт на последний релиз ([1b565f6](https://github.com/allakin/Design-review-checker/commit/1b565f6ba90c5473ad055b80f8cd9256a8cfd0e7))
+
 ## [1.2.0] — 2026-10-22
 
 ### Новое
